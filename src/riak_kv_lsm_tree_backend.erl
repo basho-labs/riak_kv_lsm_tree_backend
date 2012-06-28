@@ -1,3 +1,6 @@
+%% -*- coding: utf-8; Mode: erlang; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*-
+%% ex: set softtabstop=4 tabstop=4 shiftwidth=4 expandtab fileencoding=utf-8:
+
 %% ----------------------------------------------------------------------------
 %%
 %% lsm_tree: A Riak/KV backend using SQLite4's Log-Structured Merge Tree
@@ -51,14 +54,14 @@
          to_key_range/1]).
 -endif.
 
--include("include/lsm_tree.hrl").
 
 -define(API_VERSION, 1).
 -define(CAPABILITIES, [async_fold, indexes]).
 
 -record(state, {tree,
                 partition :: integer(),
-                config :: config() }).
+                tree      :: lsm_tree:tree(),
+                config    :: config() }).
 
 -type state() :: #state{}.
 -type config_option() :: {data_root, string()} | lsm_tree:config_option().
@@ -279,9 +282,9 @@ fold_objects(FoldObjectsFun, Acc, Opts, #state{tree=Tree}) ->
     FoldFun = fold_objects_fun(FoldObjectsFun, Bucket),
     ObjectFolder =
         fun() ->
-%                io:format(user, "starting fold_objects in ~p~n", [self()]),
+                ?log ("starting fold_objects in ~p~n", [self()]),
                 Result = lsm_tree:fold_range(Tree, FoldFun, Acc, to_key_range(Bucket)),
-%                io:format(user, "ended fold_objects in ~p => ~P~n", [self(),Result,20]),
+                ?log ("ended fold_objects in ~p => ~P~n", [self(),Result,20]),
                 Result
         end,
     case proplists:get_bool(async_fold, Opts) of
@@ -305,14 +308,7 @@ drop(#state{ tree=Tree, partition=Partition, config=Config }=State) ->
 %% non-tombstone values; otherwise returns false.
 -spec is_empty(state()) -> boolean().
 is_empty(#state{tree=Tree}) ->
-    FoldFun = fun(K, _V, Acc) -> [K|Acc] end,
-    try
-        Range = to_key_range(undefined),
-        [] =:= lsm_tree:fold_range(Tree, FoldFun, [], Range#key_range{ limit=1 })
-    catch
-        _:ok ->
-            false
-    end.
+    lsm_tree:is_empty(Tree).
 
 %% @doc Get the status information for this lsm_tree backend
 -spec status(state()) -> [{atom(), term()}].
@@ -411,13 +407,13 @@ fold_objects_fun(FoldObjectsFun, FilterBucket) ->
 -define(MAX_INDEX_KEY, <<16,0,0,0,6>>).
 
 to_key_range(undefined) ->
-    #key_range{ from_key       = to_object_key(<<>>, <<>>),
+    #key_range{   from_key       = to_object_key(<<>>, <<>>),
                   from_inclusive = true,
                   to_key         = ?MAX_OBJECT_KEY,
                   to_inclusive   = false
                 };
 to_key_range({bucket, Bucket}) ->
-    #key_range{ from_key       = to_object_key(Bucket, <<>>),
+    #key_range{   from_key       = to_object_key(Bucket, <<>>),
                   from_inclusive = true,
                   to_key         = to_object_key(<<Bucket/binary, 0>>, <<>>),
                   to_inclusive   = false };
@@ -426,12 +422,12 @@ to_key_range({index, Bucket, {eq, <<"$bucket">>, _Term}}) ->
 to_key_range({index, Bucket, {eq, Field, Term}}) ->
     to_key_range({index, Bucket, {range, Field, Term, Term}});
 to_key_range({index, Bucket, {range, <<"$key">>, StartTerm, EndTerm}}) ->
-    #key_range{ from_key       = to_object_key(Bucket, StartTerm),
+    #key_range{   from_key       = to_object_key(Bucket, StartTerm),
                   from_inclusive = true,
                   to_key         = to_object_key(Bucket, EndTerm),
                   to_inclusive   = true };
 to_key_range({index, Bucket, {range, Field, StartTerm, EndTerm}}) ->
-    #key_range{ from_key       = to_index_key(Bucket, <<>>, Field, StartTerm),
+    #key_range{   from_key       = to_index_key(Bucket, <<>>, Field, StartTerm),
                   from_inclusive = true,
                   to_key         = to_index_key(Bucket, <<16#ff,16#ff,16#ff,16#ff,
                                                           16#ff,16#ff,16#ff,16#ff,
@@ -444,9 +440,6 @@ to_key_range({index, Bucket, {range, Field, StartTerm, EndTerm}}) ->
                   to_inclusive   = false };
 to_key_range(Other) ->
     erlang:throw({unknown_limiter, Other}).
-
-
-
 
 to_object_key(Bucket, Key) ->
     sext:encode({o, Bucket, Key}).

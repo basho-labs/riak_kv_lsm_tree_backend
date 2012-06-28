@@ -1,3 +1,6 @@
+%% -*- coding: utf-8; Mode: erlang; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*-
+%% ex: set softtabstop=4 tabstop=4 shiftwidth=4 expandtab fileencoding=utf-8:
+
 %% ----------------------------------------------------------------------------
 %%
 %% lsm_tree: A Riak/KV backend using SQLite4's Log-Structured Merge Tree
@@ -24,8 +27,12 @@
          get/2,
          put/3,
          delete/3,
+         transact/3,
          fold/3,
+         fold_range/4,
          fold_keys/3,
+         destroy/1,
+         is_empty/1, %TODO: or count/1
          truncate/1,
          config_option/0]).
 
@@ -40,12 +47,12 @@
 
 -type config() :: binary().
 -type config_list() :: [{atom(), any()}].
--opaque connection() :: reference().
+-opaque tree() :: reference().
 -opaque cursor() :: reference().
 -type key() :: binary().
 -type value() :: binary().
 
--export_type([connection/0, cursor/0]).
+-export_type([tree/0, cursor/0]).
 
 -on_load(init/0).
 
@@ -67,11 +74,11 @@ init() ->
               end,
     erlang:load_nif(filename:join(PrivDir, atom_to_list(?MODULE)), 0).
 
--spec open(string(), config()) -> {ok, connection()} | {error, term()}.
+-spec open(string(), config()) -> {ok, tree()} | {error, term()}.
 open(_HomeDir, _Config) ->
     ?nif_stub.
 
--spec close(connection()) -> ok | {error, term()}.
+-spec close(tree()) -> ok | {error, term()}.
 close(_ConnRef) ->
     ?nif_stub.
 
