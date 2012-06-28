@@ -1,0 +1,12 @@
+#!/bin/sh -
+
+function get_fnc() {
+    curl -s http://www.sqlite.org/src4/raw/src?name=$1 | grep src/lsm | sed -e 's/src\///' | awk '{print $2, $3}'
+}
+
+while read filename commit; do
+    echo updating $filename to $commit
+    curl -s "http://www.sqlite.org/src4/raw/src/$filename?name=$commit" > $filename
+done <<EOF
+$(get_fnc 3a4aa407a7ec638df83927d4c8ec10fde396c022)
+EOF
