@@ -1,5 +1,6 @@
 #!/bin/sh -
 
+# http://www.sqlite.org/src4/dir?name=src&ci=tip
 function get_fnc() {
     curl -s http://www.sqlite.org/src4/raw/src?name=$1 | grep src/lsm | sed -e 's/src\///' | awk '{print $2, $3}'
 }
