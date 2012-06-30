@@ -23,20 +23,48 @@
 %% ----------------------------------------------------------------------------
 
 -module(lsm_tree).
+-author('Greg Burd <greg@burd.me>').
 
--export([open/2,
-         close/1,
-         get/2,
-         put/3,
-         delete/3,
-         transact/3,
-         fold/3,
-         fold_range/4,
-         fold_keys/3,
-         destroy/1,
-         is_empty/1, %TODO: or count/1
-         truncate/1,
-         config_option/0]).
+-ifdef(DEBUG).
+-define(log(Fmt,Args),io:format(user,Fmt,Args)).
+-else.
+-define(log(Fmt,Args),ok).
+-endif.
+
+-export([  open/2
+         , close/1
+         , get/2
+         , put/3
+         , delete/2
+         , fold/3
+         , fold_range/4
+         , fold_keys/3
+         , fold_values/3
+         , foldl/3
+         , foldl_keys/3
+         , foldl_values/3
+         , destroy/1
+         , salvage/1
+         , sync/1
+         , compact/1
+         , truncate/1
+         , cursor_open/1
+         , cursor_close/1
+         , cursor_position/2
+         , cursor_next/1
+         , cursor_next_key/1
+         , cursor_next_value/1
+         , cursor_prev/1
+         , cursor_prev_key/1
+         , cursor_prev_value/1
+         , cursor_first/1
+         , cursor_last/1
+         % TODO is_empty/1, count/1, size/1, txn_begin/2, txn_begin/3, txn_commit/2,
+         % txn_abort/2, snapshot/1, stat/2
+         ]).
+
+-include("include/lsm_tree.hrl").
+-include("plain_rpc.hrl").
 
 -ifdef(TEST).
 -ifdef(EQC).
@@ -62,8 +90,6 @@
 nif_stub_error(Line) ->
     erlang:nif_error({nif_not_loaded,module,?MODULE,line,Line}).
 
--define(EMPTY_CONFIG, <<"\0">>).
-
 -spec init() -> ok | {error, any()}.
 init() ->
     PrivDir = case code:priv_dir(?MODULE) of
@@ -76,46 +102,64 @@ init() ->
               end,
     erlang:load_nif(filename:join(PrivDir, atom_to_list(?MODULE)), 0).
 
--spec open(string(), config()) -> {ok, tree()} | {error, term()}.
-open(_HomeDir, _Config) ->
+-spec open(string(), open_options()) -> {ok, tree()} | {error, term()}.
+open(_Path, _Options) ->
     ?nif_stub.
 
 -spec close(tree()) -> ok | {error, term()}.
 close(_ConnRef) ->
     ?nif_stub.
 
--spec delete(session(), string(), key()) -> ok | {error, term()}.
-delete(_Ref, _Table, _Key) ->
+-spec get(tree(), key()) -> {ok, value()} | not_found | {error, term()}.
+get(_Ref, _Key) ->
     ?nif_stub.
 
--spec get(session(), string(), key()) -> {ok, value()} | not_found | {error, term()}.
-get(_Ref, _Table, _Key) ->
+-spec put(tree(), key(), value()) -> ok | {error, term()}.
+put(_Ref, _Key, _Value) ->
     ?nif_stub.
 
--spec put(session(), string(), key(), value()) -> ok | {error, term()}.
-put(_Ref, _Table, _Key, _Value) ->
+-spec delete(tree(), key()) -> ok | {error, term()}.
+delete(_Ref, _Key) ->
     ?nif_stub.
 
--spec truncate(session(), string()) -> ok | {error, term()}.
--spec truncate(session(), string(), config()) -> ok | {error, term()}.
-truncate(Ref, Name) ->
-    session_truncate(Ref, Name, ?EMPTY_CONFIG).
-truncate(_Ref, _Name, _Config) ->
+-spec truncate(tree()) -> ok | {error, term()}.
+truncate(Ref) ->
     ?nif_stub.
 
--spec verify(session(), string()) -> ok | {error, term()}.
--spec verify(session(), string(), config()) -> ok | {error, term()}.
-verify(Ref, Name) ->
-    verify(Ref, Name, ?EMPTY_CONFIG).
-verify(_Ref, _Name, _Config) ->
+-spec verify(tree()) -> ok | {error, term()}.
+verify(_Ref) ->
     ?nif_stub.
 
--spec cursor_open(session(), string()) -> {ok, cursor()} | {error, term()}.
-cursor_open(_Ref, _Table) ->
+-spec salvage(string()) -> ok | {error, term()}.
+salvage(_Path) ->
+    ?nif_stub.
+
+-spec sync(tree()) -> ok | {error, term()}.
+sync(_Ref) ->
+    ?nif_stub.
+
+-spec compact(tree()) -> ok | {error, term()}.
+compact(_Ref) ->
+    ?nif_stub.
+
+-spec destroy(tree()) -> ok | {error, term()}.
+destroy(_Ref) ->
+    ?nif_stub.
+
+-spec upgrade(tree()) -> ok | {error, term()}.
+upgrade(_Ref) ->
+    throw(not_yet_implemented). % TODO: ?nif_stub.
+
+-spec cursor_open(tree()) -> {ok, cursor()} | {error, term()}.
+cursor_open(_Ref) ->
     ?nif_stub.
 
 -spec cursor_close(cursor()) -> ok | {error, term()}.
 cursor_close(_Cursor) ->
+    ?nif_stub.
+
+-spec cursor_position(cursor(), key()) -> {ok, value()} | {error, term()}.
+cursor_position(_Cursor, _Key) ->
     ?nif_stub.
 
 -spec cursor_next(cursor()) -> {ok, key(), value()} | not_found | {error, term()}.
@@ -142,28 +186,12 @@ cursor_prev_key(_Cursor) ->
 cursor_prev_value(_Cursor) ->
     ?nif_stub.
 
--spec cursor_search(cursor(), key()) -> {ok, value()} | {error, term()}.
-cursor_search(_Cursor, _Key) ->
+-spec cursor_first(cursor()) -> ok | {error, term()}.
+cursor_first(_Cursor) ->
     ?nif_stub.
 
--spec cursor_search_near(cursor(), key()) -> {ok, value()} | {error, term()}.
-cursor_search_near(_Cursor, _Key) ->
-    ?nif_stub.
-
--spec cursor_reset(cursor()) -> ok | {error, term()}.
-cursor_reset(_Cursor) ->
-    ?nif_stub.
-
--spec cursor_insert(cursor(), key(), value()) -> ok | {error, term()}.
-cursor_insert(_Cursor, _Key, _Value) ->
-    ?nif_stub.
-
--spec cursor_update(cursor(), key(), value()) -> ok | {error, term()}.
-cursor_update(_Cursor, _Key, _Value) ->
-    ?nif_stub.
-
--spec cursor_remove(cursor(), key(), value()) -> ok | {error, term()}.
-cursor_remove(_Cursor, _Key, _Value) ->
+-spec cursor_last(cursor()) -> ok | {error, term()}.
+cursor_last(_Cursor) ->
     ?nif_stub.
 
 -type fold_keys_fun() :: fun((Key::binary(), any()) -> any()).
@@ -176,6 +204,32 @@ fold_keys(_Cursor, _Fun, Acc, not_found) ->
 fold_keys(Cursor, Fun, Acc, {ok, Key}) ->
     fold_keys(Cursor, Fun, Fun(Key, Acc), cursor_next_key(Cursor)).
 
+-spec foldl_keys(cursor(), fold_keys_fun(), any()) -> any().
+foldl_keys(Cursor, Fun, Acc0) ->
+    foldl_keys(Cursor, Fun, Acc0, cursor_prev_key(Cursor)).
+foldl_keys(_Cursor, _Fun, Acc, not_found) ->
+    Acc;
+foldl_keys(Cursor, Fun, Acc, {ok, Key}) ->
+    foldl_keys(Cursor, Fun, Fun(Key, Acc), cursor_prev_key(Cursor)).
+
+-type fold_values_fun() :: fun((Key::binary(), any()) -> any()).
+
+-spec fold_values(cursor(), fold_keys_fun(), any()) -> any().
+fold_values(Cursor, Fun, Acc0) ->
+    fold_values(Cursor, Fun, Acc0, cursor_next_value(Cursor)).
+fold_values(_Cursor, _Fun, Acc, not_found) ->
+    Acc;
+fold_values(Cursor, Fun, Acc, {ok, Key}) ->
+    fold_values(Cursor, Fun, Fun(Key, Acc), cursor_next_value(Cursor)).
+
+-spec foldl_values(cursor(), fold_keys_fun(), any()) -> any().
+foldl_values(Cursor, Fun, Acc0) ->
+    foldl_values(Cursor, Fun, Acc0, cursor_prev_value(Cursor)).
+foldl_values(_Cursor, _Fun, Acc, not_found) ->
+    Acc;
+foldl_values(Cursor, Fun, Acc, {ok, Key}) ->
+    foldl_values(Cursor, Fun, Fun(Key, Acc), cursor_prev_value(Cursor)).
+
 -type fold_fun() :: fun(({Key::binary(), Value::binary()}, any()) -> any()).
 
 -spec fold(cursor(), fold_fun(), any()) -> any().
@@ -186,25 +240,120 @@ fold(_Cursor, _Fun, Acc, not_found) ->
 fold(Cursor, Fun, Acc, {ok, Key, Value}) ->
     fold(Cursor, Fun, Fun({Key, Value}, Acc), cursor_next(Cursor)).
 
+-spec foldl(cursor(), fold_fun(), any()) -> any().
+foldl(Cursor, Fun, Acc0) ->
+    foldl(Cursor, Fun, Acc0, cursor_prev(Cursor)).
+foldl(_Cursor, _Fun, Acc, not_found) ->
+    Acc;
+foldl(Cursor, Fun, Acc, {ok, Key, Value}) ->
+    foldl(Cursor, Fun, Fun({Key, Value}, Acc), cursor_prev(Cursor)).
+
+-spec fold_range(tree(), fold_fun(), any(), key_range()) -> any().
+fold_range(Ref, Fun, Acc0, Range) ->
+    {ok, FoldWorkerPID} = lsm_tree_fold_worker:start(self()),
+    Method =
+        case Range#key_range.limit < 10 of
+            true -> blocking_range;
+            false -> snapshot_range
+        end,
+    ok = gen_server:call(Ref, {Method, FoldWorkerPID, Range}, infinity),
+    MRef = erlang:monitor(process, FoldWorkerPID),
+    ?log("fold_range begin: self=~p, worker=~p~n", [self(), FoldWorkerPID]),
+    Result = receive_fold_range(MRef, FoldWorkerPID, Fun, Acc0, Range#key_range.limit),
+    ?log("fold_range done: self:~p, result=~P~n", [self(), Result, 20]),
+    Result.
+
+receive_fold_range(MRef, PID, _, Acc0, 0) ->
+    erlang:exit(PID, shutdown),
+    drain_worker_and_return(MRef, PID, Acc0);
+
+receive_fold_range(MRef, PID, Fun, Acc0, Limit) ->
+    ?log("receive_fold_range:~p,~P~n", [PID,Acc0,10]),
+    receive
+        %% receive one K/V from fold_worker
+        ?CALL(From, {fold_result, PID, K,V}) ->
+            plain_rpc:send_reply(From, ok),
+            case
+                try
+                    {ok, Fun(K,V,Acc0)}
+                catch
+                    Class:Exception ->
+                        % ?log("Exception in lsm_tree fold: ~p ~p", [Exception, erlang:get_stacktrace()]),
+                        % lager:warn("Exception in lsm_tree fold: ~p", [Exception]),
+                        {'EXIT', Class, Exception, erlang:get_stacktrace()}
+                end
+            of
+                {ok, Acc1} ->
+                    receive_fold_range(MRef, PID, Fun, Acc1, decr(Limit));
+                Exit ->
+                    %% kill the fold worker ...
+                    erlang:exit(PID, shutdown),
+                    drain_worker_and_throw(MRef, PID, Exit)
+            end;
+
+        ?CAST(_,{fold_limit, PID, _}) ->
+            ?log("> fold_limit pid=~p, self=~p~n", [PID, self()]),
+            erlang:demonitor(MRef, [flush]),
+            Acc0;
+        ?CAST(_,{fold_done, PID}) ->
+            ?log("> fold_done pid=~p, self=~p~n", [PID, self()]),
+            erlang:demonitor(MRef, [flush]),
+            Acc0;
+        {'DOWN', MRef, _, _PID, normal} ->
+            ?log("> fold worker ~p ENDED~n", [_PID]),
+            Acc0;
+        {'DOWN', MRef, _, _PID, Reason} ->
+            ?log("> fold worker ~p DOWN reason:~p~n", [_PID, Reason]),
+            error({fold_worker_died, Reason})
+    end.
+
+decr(undefined) ->
+    undefined;
+decr(N) ->
+    N-1.
+
 %%
-%% Configuration type information.
+%% Just calls erlang:raise with appropriate arguments
 %%
-config_types() ->
-    [{cache_size, string},
-     {create, bool},
-     {error_prefix, string},
-     {eviction_target, integer},
-     {eviction_trigger, integer},
-     {extensions, string},
-     {force, bool},
-     {hazard_max, integer},
-     {home_environment, bool},
-     {home_environment_priv, bool},
-     {logging, bool},
-     {multiprocess, bool},
-     {session_max, integer},
-     {transactional, bool},
-     {verbose, string}].
+raise({'EXIT', Class, Exception, Trace}) ->
+    erlang:raise(Class, Exception, Trace).
+
+%%
+%% When an exception has happened in the fold function, we use
+%% this to drain messages coming from the fold_worker before
+%% re-throwing the exception.
+%%
+drain_worker_and_throw(MRef, PID, ExitTuple) ->
+    receive
+        ?CALL(_From,{fold_result, PID, _, _}) ->
+            drain_worker_and_throw(MRef, PID, ExitTuple);
+        {'DOWN', MRef, _, _, _} ->
+            raise(ExitTuple);
+        ?CAST(_,{fold_limit, PID, _}) ->
+            erlang:demonitor(MRef, [flush]),
+            raise(ExitTuple);
+        ?CAST(_,{fold_done, PID}) ->
+            erlang:demonitor(MRef, [flush]),
+            raise(ExitTuple)
+    after 0 ->
+            raise(ExitTuple)
+    end.
+
+drain_worker_and_return(MRef, PID, Value) ->
+    receive
+        ?CALL(_From,{fold_result, PID, _, _}) ->
+            drain_worker_and_return(MRef, PID, Value);
+        {'DOWN', MRef, _, _, _} ->
+            Value;
+        ?CAST(_,{fold_limit, PID, _}) ->
+            erlang:demonitor(MRef, [flush]),
+            Value;
+        ?CAST(_,{fold_done, PID}) ->
+            erlang:demonitor(MRef, [flush]),
+            Value
+    after 0 ->
+            Value
+    end.
 
 
 %% ===================================================================

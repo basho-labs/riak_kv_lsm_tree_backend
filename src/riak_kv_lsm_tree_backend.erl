@@ -24,8 +24,8 @@
 
 -module(riak_kv_lsm_tree_backend).
 -behavior(lsm_tree_temp_riak_kv_backend).
+-author('Greg Burd <greg@burd.me>').
 -author('Steve Vinoski <steve@basho.com>').
--author('Greg Burd <greg@basho.com>').
 
 %% KV Backend API
 -export([api_version/0,
@@ -44,6 +44,7 @@
          status/1,
          callback/3]).
 
+-include("include/lsm_tree.hrl").
 
 -define(log(Fmt,Args),ok).
 
@@ -58,9 +59,8 @@
 -define(API_VERSION, 1).
 -define(CAPABILITIES, [async_fold, indexes]).
 
--record(state, {tree,
+-record(state, {tree      :: lsm_tree:tree(),
                 partition :: integer(),
-                tree      :: lsm_tree:tree(),
                 config    :: config() }).
 
 -type state() :: #state{}.
@@ -210,12 +210,11 @@ fold_buckets(FoldBucketsFun, Acc, Opts, #state{tree=Tree}) ->
 
 fold_list_buckets(PrevBucket, Tree, FoldBucketsFun, Acc) ->
     ?log("fold_list_buckets prev=~p~n", [PrevBucket]),
-    case PrevBucket of
-        undefined ->
-            RangeStart = to_object_key(<<>>, '_');
-        _ ->
-            RangeStart = to_object_key(<<PrevBucket/binary, 0>>, '_')
-    end,
+    RangeStart =
+        case PrevBucket of
+            undefined -> to_object_key(<<>>, '_');
+            _ ->         to_object_key(<<PrevBucket/binary, 0>>, '_')
+        end,
 
     Range = #key_range{ from_key=RangeStart, from_inclusive=true,
                           to_key=undefined, to_inclusive=undefined,
