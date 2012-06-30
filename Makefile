@@ -1,12 +1,14 @@
 
+REBAR=		/usr/bin/env rebar
+
 all: deps
-	rebar compile
+	$(REBAR) compile
 
 clean:
-	rebar clean
+	$(REBAR) clean
 
 deps:
-	rebar get-deps
+	$(REBAR) get-deps
 
 test:
-	rebar test
+	$(REBAR) test
