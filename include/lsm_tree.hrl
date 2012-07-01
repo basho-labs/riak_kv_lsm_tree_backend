@@ -26,7 +26,7 @@
 -type open_options() :: [
 
 %%  Create specified database filename (if path where specified  exists).
-                           {create_if_missing, boolean()}
+                           {create_if_missing | create, boolean()}
 
 %% Should attempting to open an exiting database be an error?
                          | {error_if_exists, boolean()}
