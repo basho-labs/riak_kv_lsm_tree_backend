@@ -11,3 +11,6 @@ while read filename commit; do
 done <<EOF
 $(get_fnc 3a4aa407a7ec638df83927d4c8ec10fde396c022)
 EOF
+
+sed -i -e 's/sqlite_snprintf/snprintf/'g -e 's/SQLITE_OK/LSM_OK/g' lsm_sorted.c
+sed -i -e 's/prc = fdatasync/prc = os_fdatasync/' lsm_unix.c
