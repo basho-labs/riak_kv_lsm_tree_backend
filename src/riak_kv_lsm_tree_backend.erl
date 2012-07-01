@@ -467,7 +467,22 @@ from_index_key(LKey) ->
 %% ===================================================================
 -ifdef(TEST).
 
--include("src/lsm_tree.hrl").
+-define(KEY_IN_FROM_RANGE(Key,Range),
+        ((Range#key_range.from_inclusive andalso
+          (Range#key_range.from_key =< Key))
+         orelse
+           (Range#key_range.from_key < Key))).
+
+-define(KEY_IN_TO_RANGE(Key,Range),
+        ((Range#key_range.to_key == undefined)
+         orelse
+         ((Range#key_range.to_inclusive andalso
+             (Key =< Range#key_range.to_key))
+          orelse
+             (Key <  Range#key_range.to_key)))).
+
+-define(KEY_IN_RANGE(Key,Range),
+        (?KEY_IN_FROM_RANGE(Key,Range) andalso ?KEY_IN_TO_RANGE(Key,Range))).
 
 key_range_test() ->
     Range = to_key_range({bucket, <<"a">>}),
@@ -492,7 +507,7 @@ simple_test_() ->
     application:set_env(lsm_tree, data_root, "test/lsm_treed-backend"),
     lsm_tree_temp_riak_kv_backend:standard_test(?MODULE, []).
 
-custom_config_test_() ->
+custom_config_test_() -> %% TODO
     ?assertCmd("rm -rf test/lsm_tree-backend"),
     application:set_env(lsm_tree, data_root, ""),
     lsm_tree_temp_riak_kv_backend:standard_test(?MODULE, [{data_root, "test/lsm_tree-backend"}]).

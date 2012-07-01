@@ -32,12 +32,12 @@
 #include "lsm.h"
 #define LSM_NOTFOUND -1 // TODO: validate this
 
-#define MB (1024 * 1024 * 1024)
 #define KB 1024
+#define MB (1024 * KB)
 
 static ErlNifResourceType* lsm_tree_RESOURCE;
 static ErlNifResourceType* lsm_cursor_RESOURCE;
-static lsm_env* lsm_env_RESOURCE;
+static lsm_env erl_nif_env;
 
 typedef struct {
   lsm_db *pDb;                       /* LSM database handle */
@@ -66,9 +66,10 @@ static ERL_NIF_TERM ATOM_NORMAL;
 static ERL_NIF_TERM ATOM_FULL;
 static ERL_NIF_TERM ATOM_TRUE;
 static ERL_NIF_TERM ATOM_FALSE;
-static ERL_NIF_TERM ATOM_CREATE_IF_MISSING;
-static ERL_NIF_TERM ATOM_ERROR_IF_EXISTS;
-static ERL_NIF_TERM ATOM_CHECKSUM_VALUES;
+static ERL_NIF_TERM ATOM_CREATE; // Shorthand for CREATE_IF_MISSING below
+static ERL_NIF_TERM ATOM_CREATE_IF_MISSING; //TODO
+static ERL_NIF_TERM ATOM_ERROR_IF_EXISTS;   //TODO
+static ERL_NIF_TERM ATOM_CHECKSUM_VALUES;   //TODO
 
 // Prototypes
 static ERL_NIF_TERM lsm_tree_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -91,7 +92,8 @@ static ERL_NIF_TERM lsm_cursor_prev_value(ErlNifEnv* env, int argc, const ERL_NI
 //static ERL_NIF_TERM lsm_txn_commit(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 //static ERL_NIF_TERM lsm_txn_abort(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_tree_salvage(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-static ERL_NIF_TERM lsm_tree_sync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM lsm_tree_flush(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM lsm_tree_checkpoint(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_tree_truncate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_tree_compact(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_tree_destroy(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -108,13 +110,14 @@ static ErlNifFunc nif_funcs[] =
     {"get",               2, lsm_tree_get},
     {"put",               3, lsm_tree_put},
     {"delete",            2, lsm_tree_delete},
-    {"salvage",           2, lsm_tree_salvage},
-    {"sync",              2, lsm_tree_sync},
+    {"flush",             1, lsm_tree_flush},
+    {"salvage",           1, lsm_tree_salvage},
+    {"checkpoint",        1, lsm_tree_checkpoint},
     {"truncate",          1, lsm_tree_truncate},
-    {"compact",           2, lsm_tree_compact},
-    {"destroy",           2, lsm_tree_destroy},
-    {"upgrade",           2, lsm_tree_upgrade},
-    {"verify",            2, lsm_tree_verify},
+    {"compact",           1, lsm_tree_compact},
+    {"destroy",           1, lsm_tree_destroy},
+    {"upgrade",           1, lsm_tree_upgrade},
+    {"verify",            1, lsm_tree_verify},
     {"cursor_open",       1, lsm_cursor_open},
     {"cursor_close",      1, lsm_cursor_close},
     {"cursor_position",   2, lsm_cursor_position},
@@ -150,7 +153,8 @@ static ERL_NIF_TERM make_error_msg(ErlNifEnv* env, const char* mesg)
   return enif_make_tuple2(env, ATOM_ERROR, make_atom(env, mesg));
 }
 
-static ERL_NIF_TERM make_error(ErlNifEnv* env, int rc)
+#define make_error(__env, __rc) __make_error(__env, __rc, __FILE__, __LINE__)
+static ERL_NIF_TERM __make_error(ErlNifEnv* env, int rc, char *file, int line)
 {
   switch(rc)
     {
@@ -165,7 +169,9 @@ static ERL_NIF_TERM make_error(ErlNifEnv* env, int rc)
     case LSM_MISUSE:         return make_error_msg(env, "lsm_misuse");
     case LSM_ERROR: default:;/* FALLTHRU */
     }
-  return make_error_msg(env, "lsm_error");
+  static char buf[MAXPATHLEN+1024];
+  snprintf(buf, 1024, "lsm_error(%d) at %s:%d", rc, file, line);
+  return make_error_msg(env, buf);
 }
 
 static int __compare_keys(const void *key1, int n1, const void *key2, int n2)
@@ -186,90 +192,104 @@ ERL_NIF_TERM __config_lsm_env(ErlNifEnv* env, ERL_NIF_TERM list, int op, lsm_db 
 
     while (enif_get_list_cell(env, list, &head, &tail)) {
         rc = enif_get_tuple(env, head, &arity, &option);
-        if (!rc) return make_error(env, rc);
-        if (arity != 2) return make_error_msg(env, "lsm_tree open_config: wrong arity");
+        if (rc != LSM_OK) return make_error(env, rc);
+        if (arity != 2) return make_error_msg(env, "lsm_tree:open_config -- wrong tuple size");
         if (option[0] == ATOM_WRITE_BUFFER && op == LSM_CONFIG_WRITE_BUFFER) {
             rc = enif_get_int(env, option[1], &n);
-            if (!rc) return make_error(env, rc);
+            if (rc != LSM_OK) return make_error(env, rc);
             if (n < (8 * KB) || n > (512 * MB)) n = (8 * KB);
-            rc = lsm_config(db, op, n);
+            rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
         } else if (option[0] == ATOM_PAGE_SIZE && op == LSM_CONFIG_PAGE_SIZE) {
             rc = enif_get_int(env, option[1], &n);
-            if (!rc) return make_error(env, rc);
+            if (rc != LSM_OK) return make_error(env, rc);
             if (n < 512 || n > (8 * KB)) n = (8 * KB);
-            rc = lsm_config(db, op, n);
+            rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
         } else if (option[0] == ATOM_BLOCK_SIZE && op == LSM_CONFIG_BLOCK_SIZE) {
             rc = enif_get_int(env, option[1], &n);
-            if (!rc) return make_error(env, rc);
+            if (rc != LSM_OK) return make_error(env, rc);
             if (n < (8 * KB) || n > (512 * MB)) n = (8 * KB);
-            rc = lsm_config(db, op, n);
+            rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
         } else if (option[0] == ATOM_LOG_SIZE && op == LSM_CONFIG_LOG_SIZE) {
             rc = enif_get_int(env, option[1], &n);
-            if (!rc) return make_error(env, rc);
+            if (rc != LSM_OK) return make_error(env, rc);
             if (n < (8 * KB) || n > (512 * MB)) n = (8 * KB);
-            rc = lsm_config(db, op, n);
+            rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
         } else if (option[0] == ATOM_SAFETY && op == LSM_CONFIG_SAFETY) {
             if (option[1] == ATOM_OFF || option[1] == ATOM_FALSE) {
-                rc = lsm_config(db, op, 0);
+                n = 0;
+                rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else if (option[1] == ATOM_NORMAL) {
-                rc = lsm_config(db, op, 1);
+                n = 1;
+                rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else if (option[1] == ATOM_FULL) {
-                rc = lsm_config(db, op, 2);
+                n = 2;
+                rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else {
-                return make_error_msg(env, "lsm_tree open_config safety: badarg");
+                return make_error_msg(env, "lsm_tree:open {safety, ...} bad value");
             }
         } else if (option[0] == ATOM_AUTOWORK && op == LSM_CONFIG_AUTOWORK) {
             if (option[1] == ATOM_ON || option[1] == ATOM_TRUE) {
-                rc = lsm_config(db, op, 1);
+                n = 1;
+                rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else if (option[1] == ATOM_OFF || option[1] == ATOM_FALSE) {
-                rc = lsm_config(db, op, 0);
+                n = 0;
+                rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else {
-                return make_error_msg(env, "lsm_tree open_config autowork: badarg");
+                return make_error_msg(env, "lsm_tree:open {autowork, ...} bad value");
             }
         } else if (option[0] == ATOM_MMAP && op == LSM_CONFIG_MMAP) {
             if (option[1] == ATOM_ON || option[1] == ATOM_TRUE) {
-                rc = lsm_config(db, op, 1);
+                n = 1;
+                rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else if (option[1] == ATOM_OFF || option[1] == ATOM_FALSE) {
-                rc = lsm_config(db, op, 0);
+                n = 0;
+                rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else {
-                return make_error_msg(env, "lsm_tree open_config mmap: badarg");
+                return make_error_msg(env, "lsm_tree:open {mmap, ...} bad value");
             }
         } else if (option[0] == ATOM_USE_LOG && op == LSM_CONFIG_USE_LOG) {
             if (option[1] == ATOM_ON || option[1] == ATOM_TRUE) {
-                rc = lsm_config(db, op, 1);
+                n = 1;
+                rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else if (option[1] == ATOM_OFF || option[1] == ATOM_FALSE) {
-                rc = lsm_config(db, op, 0);
+                n = 0;
+                rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else {
-                return make_error_msg(env, "lsm_tree open_config use_log: badarg");
+                return make_error_msg(env, "lsm_tree:open {use_log, ...} bad value");
             }
         } else if (option[0] == ATOM_NMERGE && op == LSM_CONFIG_NMERGE) {
             rc = enif_get_int(env, option[1], &n);
-            if (!rc) return make_error(env, rc);
+            if (rc != LSM_OK) return make_error(env, rc);
             if (n < 4 || n > 100) n = 4;
-            rc = lsm_config(db, op, n);
+            rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
-        } else if (option[0] == ATOM_CREATE_IF_MISSING ||
+        } else if (option[0] == ATOM_CREATE_IF_MISSING || option[0] == ATOM_CREATE ||
                    option[0] == ATOM_ERROR_IF_EXISTS ||
                    option[0] == ATOM_CHECKSUM_VALUES) {
             list = tail; continue; // Skip these legal values
+        } if (head == tail) {
+            static char msg[1024], o[800];
+            enif_get_string(env, option[0], o, sizeof o, ERL_NIF_LATIN1);
+            snprintf(msg, 1024, "lsm_tree:open \"%s\" is not a valid option", o);
+            return make_error_msg(env, msg);
         } else {
             list = tail;
         }
     }
-    return make_error_msg(env, "lsm_tree open_config: unrecognized option setting");
+    return 0; // 0 means the requested argument
 }
 
 //-spec open(string(), open_options()) -> {ok, tree()} | {error, term()}.
@@ -282,21 +302,21 @@ static ERL_NIF_TERM lsm_tree_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
       return ATOM_BADARG;
 
     // Get the options
-    //TODO    int flags = get_file_open_flags(env, argv[1]);
+    //TODO: deal with other open options... int flags = __get_file_open_flags(env, argv[1]);
 
     LsmTreeHandle* tree_handle = enif_alloc_resource(lsm_tree_RESOURCE, sizeof(LsmTreeHandle));
     if (!tree_handle) return ATOM_ENOMEM;
 
-    lsm_db* db;;
-    int rc = lsm_new(lsm_env_RESOURCE, &db);
+    lsm_db* db;
+    int rc = lsm_new(&erl_nif_env, &db);
     if (rc != LSM_OK) return make_error(env, rc);
 
     int opts[] = {LSM_CONFIG_WRITE_BUFFER, LSM_CONFIG_PAGE_SIZE, LSM_CONFIG_BLOCK_SIZE,
-                   LSM_CONFIG_LOG_SIZE,     LSM_CONFIG_SAFETY,    LSM_CONFIG_AUTOWORK,
-                   LSM_CONFIG_MMAP,         LSM_CONFIG_USE_LOG,   LSM_CONFIG_NMERGE};
+                  LSM_CONFIG_LOG_SIZE,     LSM_CONFIG_SAFETY,    LSM_CONFIG_AUTOWORK,
+                  LSM_CONFIG_MMAP,         LSM_CONFIG_USE_LOG,   LSM_CONFIG_NMERGE};
     for (int i = 0; i < sizeof(opts); i++) {
         ERL_NIF_TERM t = __config_lsm_env(env, argv[1], opts[i], db);
-        if (t) {
+        if (t != 0) {
             enif_release_resource(tree_handle);
             return t;
         }
@@ -307,16 +327,12 @@ static ERL_NIF_TERM lsm_tree_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
       // TODO: automate recovery
       // if (rc == LSM_CORRUPT) {
       //     recover database if options says to...
-      // TODO: deal with open options...
-      lsm_close(tree_handle->pDb);
       enif_release_resource(tree_handle);
       return make_error(env, rc);
     }
 
-
     tree_handle->pDb = db;
     ERL_NIF_TERM result = enif_make_resource(env, tree_handle);
-    enif_keep_resource(tree_handle);
     enif_release_resource(tree_handle);
     return enif_make_tuple2(env, ATOM_OK, result);
 }
@@ -422,7 +438,8 @@ static ERL_NIF_TERM lsm_tree_delete(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 
 typedef enum {
     LSM_OP_SALVAGE = 1,
-    LSM_OP_SYNC,
+    LSM_OP_FLUSH,
+    LSM_OP_CHECKPOINT,
     LSM_OP_TRUNCATE,
     LSM_OP_COMPACT,
     LSM_OP_DESTROY,
@@ -446,8 +463,12 @@ static ERL_NIF_TERM __op_worker(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
           // Run recovery on a corrupt database in hopes of returning it to a usable state.
           case LSM_OP_SALVAGE: //TODO
             break;
-          // Flushes any state in-memory to disk ensuring a consistent state.
-          case LSM_OP_SYNC:
+          // Attempt to flush the contents of the in-memory tree to disk.
+          case LSM_OP_FLUSH:
+            rc = lsm_work(db, LSM_WORK_FLUSH, 0, 0);
+            return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
+          // Write a checkpoint (if one exists in memory) to the database file.
+          case LSM_OP_CHECKPOINT:
             rc = lsm_work(db, LSM_WORK_CHECKPOINT, 0, 0);
             return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
           // Empties an open database of all key/value pairs, may not reduce on-disk files.
@@ -482,15 +503,17 @@ static ERL_NIF_TERM lsm_tree_truncate(ErlNifEnv* env, int argc, const ERL_NIF_TE
 static ERL_NIF_TERM lsm_tree_verify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 { return __op_worker(env, argc, argv, LSM_OP_VERIFY); }
 
-
 //-spec salvage(string()) -> ok | {error, term()}.
 static ERL_NIF_TERM lsm_tree_salvage(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 { return __op_worker(env, argc, argv, LSM_OP_SALVAGE); }
 
-//-spec sync(tree()) -> ok | {error, term()}.
-static ERL_NIF_TERM lsm_tree_sync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
-{ return __op_worker(env, argc, argv, LSM_OP_SYNC); }
+//-spec flush(tree()) -> ok | {error, term()}.
+static ERL_NIF_TERM lsm_tree_flush(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{ return __op_worker(env, argc, argv, LSM_OP_FLUSH); }
 
+//-spec checkpoint(tree()) -> ok | {error, term()}.
+static ERL_NIF_TERM lsm_tree_checkpoint(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{ return __op_worker(env, argc, argv, LSM_OP_CHECKPOINT); }
 
 //-spec compact(tree()) -> ok | {error, term()}.
 static ERL_NIF_TERM lsm_tree_compact(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -521,7 +544,6 @@ static ERL_NIF_TERM lsm_cursor_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM
           return make_error(env, rc);
         } else {
           ERL_NIF_TERM result = enif_make_resource(env, cursor_handle);
-          enif_keep_resource(tree_handle);
           enif_release_resource(cursor_handle);
           return enif_make_tuple2(env, ATOM_OK, result);
         }
@@ -732,7 +754,6 @@ static ERL_NIF_TERM lsm_txn_begin(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
           return make_error(env, rc);
         } else {
           ERL_NIF_TERM result = enif_make_resource(env, cursor_handle);
-          enif_keep_resource(tree_handle);
           enif_release_resource(cursor_handle);
           return enif_make_tuple2(env, ATOM_OK, result);
         }
@@ -803,24 +824,28 @@ static int __mutex_not_held(lsm_mutex* m)
 static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 {
     ErlNifResourceFlags flags = ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER;
-    lsm_env_RESOURCE = lsm_default_env();
+
     // Use Erlang/BEAM's memory allocation and mutex functions.
-    lsm_env_RESOURCE->xMalloc = __malloc;                 /* malloc(3) function */
-    lsm_env_RESOURCE->xRealloc = __realloc;               /* realloc(3) function */
-    lsm_env_RESOURCE->xFree = __free;                     /* free(3) function */
-    lsm_env_RESOURCE->xMutexStatic = __mutex_static;      /* Obtain a static mutex */
-    lsm_env_RESOURCE->xMutexNew = __mutex_create;         /* Get a new dynamic mutex */
-    lsm_env_RESOURCE->xMutexDel = __mutex_destroy;        /* Delete an allocated mutex */
-    lsm_env_RESOURCE->xMutexEnter = __mutex_lock;         /* Grab a mutex */
-    lsm_env_RESOURCE->xMutexTry = __mutex_trylock;        /* Attempt to obtain a mutex */
-    lsm_env_RESOURCE->xMutexLeave = __mutex_unlock;       /* Leave a mutex */
+    memcpy(&erl_nif_env, lsm_default_env(), sizeof(lsm_env));
+
+#if 0 // TODO
+    erl_nif_env.xMalloc = __malloc;                 /* malloc(3) function */
+    erl_nif_env.xRealloc = __realloc;               /* realloc(3) function */
+    erl_nif_env.xFree = __free;                     /* free(3) function */
+    erl_nif_env.xMutexStatic = __mutex_static;      /* Obtain a static mutex */
+    erl_nif_env.xMutexNew = __mutex_create;         /* Get a new dynamic mutex */
+    erl_nif_env.xMutexDel = __mutex_destroy;        /* Delete an allocated mutex */
+    erl_nif_env.xMutexEnter = __mutex_lock;         /* Grab a mutex */
+    erl_nif_env.xMutexTry = __mutex_trylock;        /* Attempt to obtain a mutex */
+    erl_nif_env.xMutexLeave = __mutex_unlock;       /* Leave a mutex */
+#endif
 #ifdef LSM_DEBUG
-    lsm_env_RESOURCE->xMutexHeld = __mutex_held;          /* Return true if mutex is held */
-    lsm_env_RESOURCE->xMutexNotHeld = __mutex_not_held;   /* Return true if mutex not held */
+    erl_nif_env.xMutexHeld = __mutex_held;          /* Return true if mutex is held */
+    erl_nif_env.xMutexNotHeld = __mutex_not_held;   /* Return true if mutex not held */
 #endif
 #ifdef MISSING_FROM_LSM_API
     // Set the key comparison function
-    lsm_env_RESOURCE->xCmp = __compare_keys;
+    erl_nif_env.xCmp = __compare_keys;
 #else
 #endif
     // TODO: pass log messages up to lager: lsm_config_log();
@@ -847,6 +872,7 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_FULL = make_atom(env, "full");
     ATOM_TRUE = make_atom(env, "true");
     ATOM_FALSE = make_atom(env, "false");
+    ATOM_CREATE = make_atom(env, "create");
     ATOM_CREATE_IF_MISSING = make_atom(env, "create_if_missing");
     ATOM_ERROR_IF_EXISTS = make_atom(env, "error_if_exists");
     ATOM_CHECKSUM_VALUES =make_atom(env, "checksum_values");
