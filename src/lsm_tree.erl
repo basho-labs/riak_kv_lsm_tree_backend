@@ -107,7 +107,7 @@ init() ->
 
 -spec open(string()) -> {ok, tree()} | {error, term()}.
 open(Path) ->
-    %% TODO all these defaults are guesses at this point, validate them
+    %% TODO all these values are guesses, they need to be tested and validated
     open(Path, [ {create_if_missing, true}
                , {checksum_values, true}
                , {write_buffer, 104857600} % 10MB
@@ -118,7 +118,7 @@ open(Path) ->
                , {autowork, on}
                , {mmap, on}
                , {log, on}
-               , {nmerge, on} ]).
+               , {nmerge, 8} ]).
 
 -spec open(string(), config_list()) -> {ok, tree()} | {error, term()}.
 open(_Path, _Options) ->
@@ -184,7 +184,7 @@ cursor_open(_Ref) ->
 cursor_close(_Cursor) ->
     ?nif_stub.
 
--spec cursor_position(cursor(), key()) -> {ok, value()} | {error, term()}.
+-spec cursor_position(cursor(), key()) -> ok | {ok, value()} | {error, term()}.
 cursor_position(_Cursor, _Key) ->
     ?nif_stub.
 
