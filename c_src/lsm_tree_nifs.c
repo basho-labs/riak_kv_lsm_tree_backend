@@ -43,7 +43,9 @@ typedef struct {
   lsm_db *pDb;                       /* LSM database handle */
 } LsmTreeHandle;
 
-typedef lsm_cursor *LsmCursorHandle; /* LSM cursor handle */
+typedef struct {
+  lsm_cursor *pCsr;                  /* LSM cursor handle */
+} LsmCursorHandle;
 
 // Atoms (initialized in on_load)
 static ERL_NIF_TERM ATOM_ERROR;
@@ -143,35 +145,55 @@ static ERL_NIF_TERM make_atom(ErlNifEnv* env, const char* name)
   return enif_make_atom(env, name);
 }
 
-//static ERL_NIF_TERM make_ok(ErlNifEnv* env, ERL_NIF_TERM mesg)
+//static ERL_NIF_TERM make_ok(ErlNifEnv* env, ERL_NIF_TERM msg)
 //{
-//  return enif_make_tuple2(env, ATOM_OK, mesg);
+//  return enif_make_tuple2(env, ATOM_OK, msg);
 //}
 
-static ERL_NIF_TERM make_error_msg(ErlNifEnv* env, const char* mesg)
+#if defined(TEST) || defined(DEBUG)
+#define make_error_msg(__env, __msg) __make_error_msg(__env, __msg, __FILE__, __LINE__)
+static ERL_NIF_TERM __make_error_msg(ErlNifEnv* env, const char* msg, char *file, int line)
+#else
+static ERL_NIF_TERM __make_error_msg(ErlNifEnv* env, const char* msg)
+#endif
 {
-  return enif_make_tuple2(env, ATOM_ERROR, make_atom(env, mesg));
+#if defined(TEST) || defined(DEBUG)
+  static char buf[MAXPATHLEN+1024];
+  snprintf(buf, 1024, "%s at %s:%d", msg, file, line);
+  return enif_make_tuple2(env, ATOM_ERROR, make_atom(env, msg));
+#else
+  return enif_make_tuple2(env, ATOM_ERROR, make_atom(env, msg));
+#endif
 }
 
+#if defined(TEST) || defined(DEBUG)
 #define make_error(__env, __rc) __make_error(__env, __rc, __FILE__, __LINE__)
+#define __error_msg(__env, __msg, __file, __line) __make_error_msg(__env, __msg, __file, __line)
 static ERL_NIF_TERM __make_error(ErlNifEnv* env, int rc, char *file, int line)
+#else
+#define make_error(__env, __rc) __make_error(__env, __rc)
+#define __error_msg(__env, __msg, __file, __line) __make_error_msg(__env, __msg)
+static ERL_NIF_TERM __make_error(ErlNifEnv* env, int rc)
+#endif
 {
   switch(rc)
     {
     case LSM_OK:             return ATOM_OK;
     case LSM_NOTFOUND:       return ATOM_NOTFOUND;
-    case LSM_BUSY:           return make_error_msg(env, "lsm_busy");
+    case LSM_BUSY:           return __error_msg(env, "lsm_busy", file, line);
     case LSM_NOMEM:          return ATOM_ENOMEM;
-    case LSM_IOERR:          return make_error_msg(env, "lsm_ioerr");
-    case LSM_CORRUPT:        return make_error_msg(env, "lsm_corrupt");
-    case LSM_FULL:           return make_error_msg(env, "lsm_full");
-    case LSM_CANTOPEN:       return make_error_msg(env, "lsm_cant_open");
-    case LSM_MISUSE:         return make_error_msg(env, "lsm_misuse");
+    case LSM_IOERR:          return __error_msg(env, "lsm_ioerr", file, line);
+    case LSM_CORRUPT:        return __error_msg(env, "lsm_corrupt", file, line);
+    case LSM_FULL:           return __error_msg(env, "lsm_full", file, line);
+    case LSM_CANTOPEN:       return __error_msg(env, "lsm_cant_open", file, line);
+    case LSM_MISUSE:         return __error_msg(env, "lsm_misuse", file, line);
     case LSM_ERROR: default:;/* FALLTHRU */
     }
-  static char buf[MAXPATHLEN+1024];
-  snprintf(buf, 1024, "lsm_error(%d) at %s:%d", rc, file, line);
-  return make_error_msg(env, buf);
+#if defined(TEST) || defined(DEBUG)
+  return __error_msg(env, "lsm_error", file, line);
+#else
+  return __error_msg(env, "lsm_error");
+#endif
 }
 
 static int __compare_keys(const void *key1, int n1, const void *key2, int n2)
@@ -189,32 +211,48 @@ ERL_NIF_TERM __config_lsm_env(ErlNifEnv* env, ERL_NIF_TERM list, int op, lsm_db 
     int n;
     ERL_NIF_TERM head, tail;
     const ERL_NIF_TERM* option;
+    static char msg[1024], o[1024];
 
     while (enif_get_list_cell(env, list, &head, &tail)) {
-        rc = enif_get_tuple(env, head, &arity, &option);
-        if (rc != LSM_OK) return make_error(env, rc);
+        if (!enif_get_tuple(env, head, &arity, &option)) {
+            enif_get_string(env, head, o, sizeof o, ERL_NIF_LATIN1);
+            snprintf(msg, 1024, "lsm_tree:open config \"%s\" is not a valid tuple", o);
+            return make_error_msg(env, msg);
+        }
         if (arity != 2) return make_error_msg(env, "lsm_tree:open_config -- wrong tuple size");
         if (option[0] == ATOM_WRITE_BUFFER && op == LSM_CONFIG_WRITE_BUFFER) {
-            rc = enif_get_int(env, option[1], &n);
-            if (rc != LSM_OK) return make_error(env, rc);
+            if (!enif_get_int(env, option[1], &n) || n < (8 * KB) || n > (512 * MB)) {
+                enif_get_string(env, option[1], o, sizeof o, ERL_NIF_LATIN1);
+                snprintf(msg, 1024, "lsm_tree:open config expects {write_buffer, <positive int>} but \"%s\" is not a valid positive integer between 8KB and 512MB in bytes", o);
+                return make_error_msg(env, msg);
+            }
             if (n < (8 * KB) || n > (512 * MB)) n = (8 * KB);
             rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
         } else if (option[0] == ATOM_PAGE_SIZE && op == LSM_CONFIG_PAGE_SIZE) {
-            rc = enif_get_int(env, option[1], &n);
-            if (rc != LSM_OK) return make_error(env, rc);
+            if (!enif_get_int(env, option[1], &n) || n < 512 || n > (8 * KB)) {
+                enif_get_string(env, option[1], o, sizeof o, ERL_NIF_LATIN1);
+                snprintf(msg, 1024, "lsm_tree:open config expects {page_size, <positive int>} but \"%s\" is not a valid positive integer between 512 bytes and 8KB in bytes", o);
+                return make_error_msg(env, msg);
+            }
             if (n < 512 || n > (8 * KB)) n = (8 * KB);
             rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
         } else if (option[0] == ATOM_BLOCK_SIZE && op == LSM_CONFIG_BLOCK_SIZE) {
-            rc = enif_get_int(env, option[1], &n);
-            if (rc != LSM_OK) return make_error(env, rc);
+            if (!enif_get_int(env, option[1], &n) || n < (8 * KB) || n > (512 * MB)) {
+                enif_get_string(env, option[1], o, sizeof o, ERL_NIF_LATIN1);
+                snprintf(msg, 1024, "lsm_tree:open config expects {block_size, <positive int>} but \"%s\" is not a valid positive integer between 8KB and 512MB in bytes", o);
+                return make_error_msg(env, msg);
+            }
             if (n < (8 * KB) || n > (512 * MB)) n = (8 * KB);
             rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
         } else if (option[0] == ATOM_LOG_SIZE && op == LSM_CONFIG_LOG_SIZE) {
-            rc = enif_get_int(env, option[1], &n);
-            if (rc != LSM_OK) return make_error(env, rc);
+            if (!enif_get_int(env, option[1], &n) || n < (8 * KB) || n > (512 * MB)) {
+                enif_get_string(env, option[1], o, sizeof o, ERL_NIF_LATIN1);
+                snprintf(msg, 1024, "lsm_tree:open config expects {log_size, <positive int>} but \"%s\" is not a valid positive integer between 8KB and 512MB in bytes", o);
+                return make_error_msg(env, msg);
+            }
             if (n < (8 * KB) || n > (512 * MB)) n = (8 * KB);
             rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
@@ -232,7 +270,9 @@ ERL_NIF_TERM __config_lsm_env(ErlNifEnv* env, ERL_NIF_TERM list, int op, lsm_db 
                 rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else {
-                return make_error_msg(env, "lsm_tree:open {safety, ...} bad value");
+                enif_get_string(env, option[1], o, sizeof o, ERL_NIF_LATIN1);
+                snprintf(msg, 1024, "lsm_tree:open config expects {safety, <on | off | true | false>} but \"%s\" is not a valid setting", o);
+                return make_error_msg(env, msg);
             }
         } else if (option[0] == ATOM_AUTOWORK && op == LSM_CONFIG_AUTOWORK) {
             if (option[1] == ATOM_ON || option[1] == ATOM_TRUE) {
@@ -244,7 +284,9 @@ ERL_NIF_TERM __config_lsm_env(ErlNifEnv* env, ERL_NIF_TERM list, int op, lsm_db 
                 rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else {
-                return make_error_msg(env, "lsm_tree:open {autowork, ...} bad value");
+                enif_get_string(env, option[1], o, sizeof o, ERL_NIF_LATIN1);
+                snprintf(msg, 1024, "lsm_tree:open config expects {autowork, <on | off | true | false>} but \"%s\" is not a valid setting", o);
+                return make_error_msg(env, msg);
             }
         } else if (option[0] == ATOM_MMAP && op == LSM_CONFIG_MMAP) {
             if (option[1] == ATOM_ON || option[1] == ATOM_TRUE) {
@@ -256,7 +298,9 @@ ERL_NIF_TERM __config_lsm_env(ErlNifEnv* env, ERL_NIF_TERM list, int op, lsm_db 
                 rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else {
-                return make_error_msg(env, "lsm_tree:open {mmap, ...} bad value");
+                enif_get_string(env, option[1], o, sizeof o, ERL_NIF_LATIN1);
+                snprintf(msg, 1024, "lsm_tree:open config expects {mmap, <on | off | true | false>} but \"%s\" is not a valid setting", o);
+                return make_error_msg(env, msg);
             }
         } else if (option[0] == ATOM_USE_LOG && op == LSM_CONFIG_USE_LOG) {
             if (option[1] == ATOM_ON || option[1] == ATOM_TRUE) {
@@ -268,11 +312,16 @@ ERL_NIF_TERM __config_lsm_env(ErlNifEnv* env, ERL_NIF_TERM list, int op, lsm_db 
                 rc = lsm_config(db, op, &n);
                 return rc != LSM_OK ? make_error(env, rc) : 0;
             } else {
-                return make_error_msg(env, "lsm_tree:open {use_log, ...} bad value");
+                enif_get_string(env, option[1], o, sizeof o, ERL_NIF_LATIN1);
+                snprintf(msg, 1024, "lsm_tree:open config expects {use_log, <on | off | true | false>} but \"%s\" is not a valid setting", o);
+                return make_error_msg(env, msg);
             }
         } else if (option[0] == ATOM_NMERGE && op == LSM_CONFIG_NMERGE) {
-            rc = enif_get_int(env, option[1], &n);
-            if (rc != LSM_OK) return make_error(env, rc);
+            if (!enif_get_int(env, option[1], &n)) {
+                enif_get_string(env, option[1], o, sizeof o, ERL_NIF_LATIN1);
+                snprintf(msg, 1024, "lsm_tree:open config expects {nmerge, <positive int>} but \"%s\" is not a valid positive integer", o);
+                return make_error_msg(env, msg);
+            }
             if (n < 4 || n > 100) n = 4;
             rc = lsm_config(db, op, &n);
             return rc != LSM_OK ? make_error(env, rc) : 0;
@@ -281,7 +330,6 @@ ERL_NIF_TERM __config_lsm_env(ErlNifEnv* env, ERL_NIF_TERM list, int op, lsm_db 
                    option[0] == ATOM_CHECKSUM_VALUES) {
             list = tail; continue; // Skip these legal values
         } if (head == tail) {
-            static char msg[1024], o[800];
             enif_get_string(env, option[0], o, sizeof o, ERL_NIF_LATIN1);
             snprintf(msg, 1024, "lsm_tree:open \"%s\" is not a valid option", o);
             return make_error_msg(env, msg);
@@ -359,41 +407,29 @@ static ERL_NIF_TERM lsm_tree_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
     {
         ErlNifBinary key;
         if (!enif_inspect_binary(env, argv[1], &key))
-          return ATOM_BADARG;
+            return ATOM_BADARG;
 
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
-        lsm_cursor* cursor = (lsm_cursor*)enif_alloc(sizeof(lsm_cursor_RESOURCE));
-        if (cursor == 0) return ATOM_ENOMEM;
+        lsm_cursor* cursor = 0;
         rc = lsm_csr_open(db, &cursor);
-        if (rc != LSM_OK) {
-          enif_free(cursor);
-          return make_error(env, rc);
-        }
+        if (rc != LSM_OK) return make_error(env, rc);
         rc = lsm_csr_seek(cursor, key.data, key.size, LSM_SEEK_EQ);
         if (rc == LSM_OK) {
-          if (lsm_csr_valid(cursor) == LSM_NOTFOUND) {
-            return ATOM_NOTFOUND;
-          } else {
+            if (lsm_csr_valid(cursor) == LSM_NOTFOUND) return ATOM_NOTFOUND;
             void *raw_value;
             int raw_value_size;
             rc = lsm_csr_value(cursor, &raw_value, &raw_value_size);
-            if (rc != LSM_OK) {
-              lsm_csr_close(cursor);
-              enif_free(cursor);
-              return make_error(env, rc);
-            } else {
-              ERL_NIF_TERM value;
-              unsigned char* bin = enif_make_new_binary(env, raw_value_size, &value);
-              memcpy(bin, raw_value, raw_value_size);
-              lsm_csr_close(cursor);
-              enif_free(cursor);
-              return enif_make_tuple2(env, ATOM_OK, value);
-            }
-          }
+            if (rc != LSM_OK) return make_error(env, rc);
+            rc = lsm_csr_close(cursor);
+            if (rc != LSM_OK) return make_error(env, rc);
+            ERL_NIF_TERM value;
+            unsigned char* bin = enif_make_new_binary(env, raw_value_size, &value);
+            if (!bin) return ATOM_ENOMEM;
+            memcpy(bin, raw_value, raw_value_size);
+            return enif_make_tuple2(env, ATOM_OK, value);
         } else {
-          enif_free(cursor);
-          return make_error(env, rc);
+            return make_error(env, rc);
         }
     }
     return ATOM_BADARG;
@@ -536,15 +572,13 @@ static ERL_NIF_TERM lsm_cursor_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
         LsmCursorHandle* cursor_handle = enif_alloc_resource(lsm_cursor_RESOURCE, sizeof(LsmCursorHandle));
-        lsm_cursor* cursor = (lsm_cursor*)cursor_handle;
-        if (cursor == 0) return ATOM_ENOMEM;
+        enif_release_resource(cursor_handle);
+        if (cursor_handle == 0) return ATOM_ENOMEM;
+        lsm_cursor* cursor = cursor_handle->pCsr;
         rc = lsm_csr_open(db, &cursor);
-        if (rc != LSM_OK) {
-          enif_release_resource(cursor_handle);
-          return make_error(env, rc);
-        } else {
+        if (rc != LSM_OK) return make_error(env, rc);
+        else {
           ERL_NIF_TERM result = enif_make_resource(env, cursor_handle);
-          enif_release_resource(cursor_handle);
           return enif_make_tuple2(env, ATOM_OK, result);
         }
     }
@@ -555,16 +589,15 @@ static ERL_NIF_TERM lsm_cursor_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 static ERL_NIF_TERM lsm_cursor_close(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     LsmCursorHandle *cursor_handle;
-    if (enif_get_resource(env, argv[0], lsm_cursor_RESOURCE, (void**)&cursor_handle))
-    {
-        lsm_cursor* cursor = (lsm_cursor*)cursor_handle;
+    if (enif_get_resource(env, argv[0], lsm_cursor_RESOURCE, (void**)&cursor_handle)) {
+        lsm_cursor* cursor = cursor_handle->pCsr;
         int rc = lsm_csr_close(cursor);
         return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
     }
     return ATOM_BADARG;
 }
 
-//-spec cursor_position(cursor(), key()) -> {ok, value()} | {error, term()}.
+//-spec cursor_position(cursor(), key()) -> ok | {ok, value()} | {error, term()}.
 static ERL_NIF_TERM lsm_cursor_position(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     LsmCursorHandle *cursor_handle;
@@ -572,36 +605,33 @@ static ERL_NIF_TERM lsm_cursor_position(ErlNifEnv* env, int argc, const ERL_NIF_
     {
         ErlNifBinary key;
         if (!enif_inspect_binary(env, argv[1], &key))
-          return ATOM_BADARG;
+            return ATOM_BADARG;
 
         int rc = LSM_OK;
-        lsm_cursor* cursor = (lsm_cursor*)cursor_handle;
-        if (cursor == 0) return ATOM_ENOMEM;
-        rc = lsm_csr_seek(cursor, key.data, key.size, LSM_SEEK_EQ);
+        lsm_cursor* cursor = cursor_handle->pCsr;
+        rc = lsm_csr_seek(cursor, key.data, key.size, LSM_SEEK_EQ); //TODO support _GE and _LE
         if (rc == LSM_OK) {
-          if (lsm_csr_valid(cursor) == LSM_NOTFOUND) {
-            return ATOM_NOTFOUND;
-          } else {
-            void *raw_key;
-            int raw_size;
-            rc = lsm_csr_key(cursor, &raw_key, &raw_size);
-            if (rc != LSM_OK) {
-                return make_error(env, rc);
+            if (lsm_csr_valid(cursor) == LSM_NOTFOUND) {
+                return ATOM_NOTFOUND;
             } else {
-              if (raw_size != key.size || __compare_keys(raw_key, raw_size, key.data, key.size)) {
-                ERL_NIF_TERM key;
-                unsigned char* bin = enif_make_new_binary(env, raw_size, &key);
-                if (!bin) {
-                  return ATOM_ENOMEM;
+                void *raw_key;
+                int raw_size;
+                rc = lsm_csr_key(cursor, &raw_key, &raw_size);
+                if (rc != LSM_OK) {
+                    return make_error(env, rc);
                 } else {
-                  memcpy(bin, raw_key, raw_size);
-                  return enif_make_tuple2(env, ATOM_OK, key);
+                    if (raw_size != key.size || __compare_keys(raw_key, raw_size, key.data, key.size)) {
+                        // Not an exact EQ match, return partially matching key we found.
+                        ERL_NIF_TERM partial_key;
+                        unsigned char* bin = enif_make_new_binary(env, raw_size, &partial_key);
+                        if (!bin) return ATOM_ENOMEM;
+                        memcpy(bin, raw_key, raw_size);
+                        return enif_make_tuple2(env, ATOM_OK, partial_key);
+                    } else {
+                        return ATOM_OK;
+                    }
                 }
-              } else {
-                  return ATOM_OK;
-              }
             }
-          }
         } else {
             return make_error(env, rc);
         }
@@ -640,16 +670,10 @@ static ERL_NIF_TERM __cursor_kv_ret(ErlNifEnv* env, lsm_cursor *cursor, int rc)
             if (rc == LSM_OK) {
                 ERL_NIF_TERM value;
                 unsigned char* vbin = enif_make_new_binary(env, raw_value_size, &value);
-                if (!vbin) {
-                    //TODO: how to free this? enif_release_binary(kbin);
-                    return ATOM_ENOMEM;
-                } else {
-                    memcpy(kbin, raw_key, raw_key_size);
-                    memcpy(vbin, raw_value, raw_value_size);
-                    return enif_make_tuple3(env, ATOM_OK, key, value);
-                }
-            } else {
-                //TODO: how to free this? enif_release_binary(kbin) and vbin?
+                if (!vbin) return ATOM_ENOMEM;
+                memcpy(kbin, raw_key, raw_key_size);
+                memcpy(vbin, raw_value, raw_value_size);
+                return enif_make_tuple3(env, ATOM_OK, key, value);
             }
         }
     }
@@ -682,7 +706,7 @@ static ERL_NIF_TERM __cursor_np_worker(ErlNifEnv* env, int argc, const ERL_NIF_T
 {
     LsmCursorHandle *cursor_handle;
     if (enif_get_resource(env, argv[0], lsm_cursor_RESOURCE, (void**)&cursor_handle)) {
-        lsm_cursor* cursor = (lsm_cursor *)cursor_handle;
+        lsm_cursor* cursor = cursor_handle->pCsr;
         return cursor_ret(env, cursor, direction == LSM_DIR_NEXT ? lsm_csr_next(cursor) : lsm_csr_prev(cursor));
     }
     return ATOM_BADARG;
@@ -717,7 +741,7 @@ static ERL_NIF_TERM lsm_cursor_first(ErlNifEnv* env, int argc, const ERL_NIF_TER
 {
     LsmCursorHandle *cursor_handle;
     if (enif_get_resource(env, argv[0], lsm_cursor_RESOURCE, (void**)&cursor_handle)) {
-        lsm_cursor* cursor = (lsm_cursor *)cursor_handle;
+        lsm_cursor* cursor = cursor_handle->pCsr;
         int rc = lsm_csr_first(cursor);
         return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
     }
@@ -729,7 +753,7 @@ static ERL_NIF_TERM lsm_cursor_last(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 {
     LsmCursorHandle *cursor_handle;
     if (enif_get_resource(env, argv[0], lsm_cursor_RESOURCE, (void**)&cursor_handle)) {
-        lsm_cursor* cursor = (lsm_cursor *)cursor_handle;
+        lsm_cursor* cursor = cursor_handle->pCsr;
         int rc = lsm_csr_last(cursor);
         return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
     }
@@ -746,7 +770,8 @@ static ERL_NIF_TERM lsm_txn_begin(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
         LsmCursorHandle* cursor_handle = enif_alloc_resource(lsm_cursor_RESOURCE, sizeof(LsmCursorHandle));
-        lsm_cursor* cursor = (lsm_cursor*)cursor_handle;
+        if (cursor_handle == 0) return ATOM_ENOMEM;
+        lsm_cursor* cursor = cursor_handle->pCsr;
         if (cursor == 0) return ATOM_ENOMEM;
         rc = lsm_csr_open(db, &cursor);
         if (rc != LSM_OK) {
