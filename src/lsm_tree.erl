@@ -116,7 +116,7 @@ open(Path) ->
                , {log_size, 104857600} % 10MB
                , {safety, normal}
                , {autowork, on}
-               , {mmap, on}
+%TODO               , {mmap, on}
                , {log, on}
                , {nmerge, 8} ]).
 
