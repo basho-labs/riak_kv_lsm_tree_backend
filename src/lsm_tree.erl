@@ -643,7 +643,7 @@ prop_put_delete() ->
                          lists:map(F, Model),
                          true
                      after
-                         ?MODULE:close(Re),
+                         ?MODULE:close(Ref),
                      end
                  end)).
 
