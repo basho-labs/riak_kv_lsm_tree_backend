@@ -908,10 +908,10 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     // Use Erlang/BEAM's memory allocation and mutex functions.
     memcpy(&erl_nif_env, lsm_default_env(), sizeof(lsm_env));
 
-#if 0 // TODO
     erl_nif_env.xMalloc = __malloc;                 /* malloc(3) function */
     erl_nif_env.xRealloc = __realloc;               /* realloc(3) function */
     erl_nif_env.xFree = __free;                     /* free(3) function */
+#if 0 // TODO
     erl_nif_env.xMutexStatic = __mutex_static;      /* Obtain a static mutex */
     erl_nif_env.xMutexNew = __mutex_create;         /* Get a new dynamic mutex */
     erl_nif_env.xMutexDel = __mutex_destroy;        /* Delete an allocated mutex */
