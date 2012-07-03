@@ -42,7 +42,6 @@ static lsm_env erl_nif_env;
 
 typedef struct {
     lsm_db *pDb;                       /* LSM database handle */
-    lsm_cursor *pRTxCsr;               /* LSM cursor holding read-trans open */
 } LsmTreeHandle;
 
 typedef struct {
@@ -379,6 +378,15 @@ static ERL_NIF_TERM lsm_tree_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
       //     recover database if options says to...
       enif_release_resource(tree_handle);
       return make_error(env, rc);
+    }
+
+    // This initializes the outermost transactional context, all user
+    // transactions will be > 1.
+    rc = lsm_begin(db, 1);
+    if (rc != LSM_OK) {
+        enif_release_resource(tree_handle);
+        lsm_close(db);
+        return make_error(env, rc);
     }
 
     tree_handle->pDb = db;
