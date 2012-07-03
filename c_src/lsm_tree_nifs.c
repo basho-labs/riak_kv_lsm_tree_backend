@@ -27,7 +27,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include <sys/param.h>
+#include <sys/errno.h>
 
 #include "lsm.h"
 
@@ -171,6 +173,24 @@ static ERL_NIF_TERM __make_error_msg(ErlNifEnv* env, const char* msg)
 #endif
 }
 
+static const char *__ioerr_msg(int err)
+{
+    char *s, *t;
+    int len = 1024;
+    static char buf[1024];
+
+    s = erl_errno_id(err);
+    if (strcmp(s, "unknown") == 0 && err == EOVERFLOW) {
+        s = "EOVERFLOW";
+    }
+
+    for (t = buf; *s && --len; s++, t++) {
+        *t = tolower(*s);
+    }
+    *t = '\0';
+    return (const char*)buf;
+}
+
 #if defined(TEST) || defined(DEBUG)
 #define make_error(__env, __rc) __make_error(__env, __rc, __FILE__, __LINE__)
 #define __error_msg(__env, __msg, __file, __line) __make_error_msg(__env, __msg, __file, __line)
@@ -186,7 +206,7 @@ static ERL_NIF_TERM __make_error(ErlNifEnv* env, int rc)
     case LSM_OK:             return ATOM_OK;
     case LSM_BUSY:           return __error_msg(env, "lsm_busy", file, line);
     case LSM_NOMEM:          return ATOM_ENOMEM;
-    case LSM_IOERR:          return __error_msg(env, "lsm_ioerr", file, line);
+    case LSM_IOERR:          return __error_msg(env, __ioerr_msg(rc), file, line);
     case LSM_CORRUPT:        return __error_msg(env, "lsm_corrupt", file, line);
     case LSM_FULL:           return __error_msg(env, "lsm_full", file, line);
     case LSM_CANTOPEN:       return __error_msg(env, "lsm_cant_open", file, line);
