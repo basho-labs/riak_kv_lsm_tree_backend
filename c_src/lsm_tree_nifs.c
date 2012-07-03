@@ -513,10 +513,8 @@ typedef enum {
 static ERL_NIF_TERM __op_worker(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[], lsm_worker_ops op)
 {
     LsmTreeHandle* tree_handle;
-    ErlNifBinary config;
 
-    if (enif_get_resource(env, argv[0], lsm_tree_RESOURCE, (void**)&tree_handle) &&
-        enif_inspect_binary(env, argv[1], &config)) {
+    if (enif_get_resource(env, argv[0], lsm_tree_RESOURCE, (void**)&tree_handle)) {
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
 
@@ -667,6 +665,7 @@ static ERL_NIF_TERM lsm_cursor_position(ErlNifEnv* env, int argc, const ERL_NIF_
 
 static ERL_NIF_TERM __cursor_key_ret(ErlNifEnv* env, lsm_cursor *cursor, int rc)
 {
+    if (lsm_csr_invalid(cursor)) return ATOM_NOTFOUND;
     if (rc == LSM_OK) {
         void *raw_key;
         int raw_key_size;
@@ -684,6 +683,7 @@ static ERL_NIF_TERM __cursor_key_ret(ErlNifEnv* env, lsm_cursor *cursor, int rc)
 
 static ERL_NIF_TERM __cursor_kv_ret(ErlNifEnv* env, lsm_cursor *cursor, int rc)
 {
+    if (lsm_csr_invalid(cursor)) return ATOM_NOTFOUND;
     if (rc == LSM_OK) {
         void *raw_key, *raw_value;
         int raw_key_size, raw_value_size;
@@ -708,6 +708,7 @@ static ERL_NIF_TERM __cursor_kv_ret(ErlNifEnv* env, lsm_cursor *cursor, int rc)
 
 static ERL_NIF_TERM __cursor_value_ret(ErlNifEnv* env, lsm_cursor *cursor, int rc)
 {
+    if (lsm_csr_invalid(cursor)) return ATOM_NOTFOUND;
     if (rc == LSM_OK) {
         void *raw_value;
         int raw_value_size;
@@ -733,7 +734,15 @@ static ERL_NIF_TERM __cursor_np_worker(ErlNifEnv* env, int argc, const ERL_NIF_T
     LsmCursorHandle *cursor_handle;
     if (enif_get_resource(env, argv[0], lsm_cursor_RESOURCE, (void**)&cursor_handle)) {
         lsm_cursor* cursor = cursor_handle->pCsr;
-        return cursor_ret(env, cursor, direction == LSM_DIR_NEXT ? lsm_csr_next(cursor) : lsm_csr_prev(cursor));
+        int rc = LSM_OK;
+        ERL_NIF_TERM result = cursor_ret(env, cursor, rc);
+        if (rc == LSM_OK) {
+            if (direction == LSM_DIR_NEXT)
+                rc = lsm_csr_next(cursor);
+            else
+                rc = lsm_csr_prev(cursor);
+            return rc == LSM_OK ? result : make_error(env, rc);
+        }
     }
     return ATOM_BADARG;
 }

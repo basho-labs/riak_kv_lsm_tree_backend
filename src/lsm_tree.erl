@@ -54,6 +54,7 @@
          , verify/1
          , cursor_open/1
          , cursor_close/1
+         , cursor_seek/2
          , cursor_position/2
          , cursor_next/1
          , cursor_next_key/1
@@ -184,6 +185,10 @@ cursor_open(_Ref) ->
 -spec cursor_close(cursor()) -> ok | {error, term()}.
 cursor_close(_Cursor) ->
     ?nif_stub.
+
+-spec cursor_seek(cursor(), key()) -> ok | {ok, value()} | {error, term()}.
+cursor_seek(Cursor, Key) ->
+    cursor_position(Cursor, Key).
 
 -spec cursor_position(cursor(), key()) -> ok | {ok, value()} | {error, term()}.
 cursor_position(_Cursor, _Key) ->
