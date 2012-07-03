@@ -895,6 +895,7 @@ static void* __malloc(lsm_env* env, int bytes) { return enif_alloc((size_t)bytes
 static void* __realloc(lsm_env* env, void* p, int bytes) { return enif_realloc(p, (size_t)bytes); }
 static void __free(lsm_env* env, void* p) { enif_free(p); }
 
+#if 0
 static int __mutex_static(lsm_env* env, int t, lsm_mutex** m)
 {
   /* TODO: what to do about "static" mutexes?
@@ -920,6 +921,7 @@ static void __mutex_destroy(lsm_mutex* m) { enif_mutex_destroy((ErlNifMutex*)m);
 static void __mutex_lock(lsm_mutex* m) { enif_mutex_lock((ErlNifMutex*)m); }
 static int __mutex_trylock(lsm_mutex* m) { return enif_mutex_trylock((ErlNifMutex*)m); }
 static void __mutex_unlock(lsm_mutex *m) { return enif_mutex_unlock((ErlNifMutex*)m); }
+#endif
 #ifdef LSM_DEBUG
 static int __mutex_held(lsm_mutex* m)
 {
