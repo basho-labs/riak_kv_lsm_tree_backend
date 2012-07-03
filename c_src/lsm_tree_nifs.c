@@ -30,21 +30,24 @@
 #include <sys/param.h>
 
 #include "lsm.h"
-#define LSM_NOTFOUND -1 // TODO: validate this
 
 #define KB 1024
 #define MB (1024 * KB)
+
+#define lsm_csr_invalid(__cursor) (lsm_csr_valid(__cursor) == 0)
 
 static ErlNifResourceType* lsm_tree_RESOURCE;
 static ErlNifResourceType* lsm_cursor_RESOURCE;
 static lsm_env erl_nif_env;
 
 typedef struct {
-  lsm_db *pDb;                       /* LSM database handle */
+    lsm_db *pDb;                       /* LSM database handle */
+    lsm_cursor *pRTxCsr;               /* LSM cursor holding read-trans open */
 } LsmTreeHandle;
 
 typedef struct {
-  lsm_cursor *pCsr;                  /* LSM cursor handle */
+    lsm_cursor *pCsr;                  /* LSM cursor handle */
+    LsmTreeHandle *tree_handle;
 } LsmCursorHandle;
 
 // Atoms (initialized in on_load)
@@ -90,6 +93,7 @@ static ERL_NIF_TERM lsm_cursor_next_key(ErlNifEnv* env, int argc, const ERL_NIF_
 static ERL_NIF_TERM lsm_cursor_next_value(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_cursor_prev_key(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_cursor_prev_value(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM lsm_cursor_delete(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 //static ERL_NIF_TERM lsm_txn_begin(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 //static ERL_NIF_TERM lsm_txn_commit(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 //static ERL_NIF_TERM lsm_txn_abort(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -131,6 +135,7 @@ static ErlNifFunc nif_funcs[] =
     {"cursor_prev",       1, lsm_cursor_prev},
     {"cursor_first",      1, lsm_cursor_first},
     {"cursor_last",       1, lsm_cursor_last},
+    {"cursor_delete",     1, lsm_cursor_delete},
 //    {"txn_begin",         2, lsm_txn_begin},
 //    {"txn_commit",        2, lsm_txn_commit},
 //    {"txn_abort",         2, lsm_txn_abort},
@@ -154,6 +159,7 @@ static ERL_NIF_TERM make_atom(ErlNifEnv* env, const char* name)
 #define make_error_msg(__env, __msg) __make_error_msg(__env, __msg, __FILE__, __LINE__)
 static ERL_NIF_TERM __make_error_msg(ErlNifEnv* env, const char* msg, char *file, int line)
 #else
+#define make_error_msg(__env, __msg) __make_error_msg(__env, __msg)
 static ERL_NIF_TERM __make_error_msg(ErlNifEnv* env, const char* msg)
 #endif
 {
@@ -179,7 +185,6 @@ static ERL_NIF_TERM __make_error(ErlNifEnv* env, int rc)
   switch(rc)
     {
     case LSM_OK:             return ATOM_OK;
-    case LSM_NOTFOUND:       return ATOM_NOTFOUND;
     case LSM_BUSY:           return __error_msg(env, "lsm_busy", file, line);
     case LSM_NOMEM:          return ATOM_ENOMEM;
     case LSM_IOERR:          return __error_msg(env, "lsm_ioerr", file, line);
@@ -358,7 +363,8 @@ static ERL_NIF_TERM lsm_tree_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
     int opts[] = {LSM_CONFIG_WRITE_BUFFER, LSM_CONFIG_PAGE_SIZE, LSM_CONFIG_BLOCK_SIZE,
                   LSM_CONFIG_LOG_SIZE,     LSM_CONFIG_SAFETY,    LSM_CONFIG_AUTOWORK,
                   LSM_CONFIG_MMAP,         LSM_CONFIG_USE_LOG,   LSM_CONFIG_NMERGE};
-    for (int i = 0; i < sizeof(opts); i++) {
+    int i;
+    for (i = 0; i < sizeof(opts); i++) {
         ERL_NIF_TERM t = __config_lsm_env(env, argv[1], opts[i], db);
         if (t != 0) {
             enif_release_resource(tree_handle);
@@ -412,11 +418,14 @@ static ERL_NIF_TERM lsm_tree_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
         if (rc != LSM_OK) return make_error(env, rc);
         rc = lsm_csr_seek(cursor, key.data, key.size, LSM_SEEK_EQ);
         if (rc == LSM_OK) {
-            if (lsm_csr_valid(cursor) == LSM_NOTFOUND) return ATOM_NOTFOUND;
+            if (lsm_csr_invalid(cursor)) return ATOM_NOTFOUND;
             void *raw_value;
             int raw_value_size;
             rc = lsm_csr_value(cursor, &raw_value, &raw_value_size);
-            if (rc != LSM_OK) return make_error(env, rc);
+            if (rc != LSM_OK) {
+                lsm_csr_close(cursor);
+                return make_error(env, rc);
+            }
             rc = lsm_csr_close(cursor);
             if (rc != LSM_OK) return make_error(env, rc);
             ERL_NIF_TERM value;
@@ -444,13 +453,13 @@ static ERL_NIF_TERM lsm_tree_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
 
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
-        rc = lsm_write(db, (void *)key.data, key.size, (void *)value.data, value.size);
+        rc = lsm_write(db, key.data, key.size, value.data, value.size);
         return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
     }
     return ATOM_BADARG;
 }
 
-//-spec delete(tree(), key()) -> ok | {error, term()}.
+//-spec delete(tree(), key()) -> ok | not_found | {error, term()}.
 static ERL_NIF_TERM lsm_tree_delete(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     LsmTreeHandle* tree_handle;
@@ -458,12 +467,34 @@ static ERL_NIF_TERM lsm_tree_delete(ErlNifEnv* env, int argc, const ERL_NIF_TERM
     {
         ErlNifBinary key;
         if (!enif_inspect_binary(env, argv[1], &key))
-          return ATOM_BADARG;
+            return ATOM_BADARG;
 
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
-        rc = lsm_delete(db, key.data, key.size);
-        return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
+        lsm_cursor* cursor = 0;
+        rc = lsm_csr_open(db, &cursor);
+        if (rc != LSM_OK) return make_error(env, rc);
+        rc = lsm_csr_seek(cursor, key.data, key.size, LSM_SEEK_EQ);
+        if (rc == LSM_OK) {
+            if (lsm_csr_invalid(cursor)) return ATOM_NOTFOUND;
+            void *raw_key;
+            int raw_key_size;
+            rc = lsm_csr_key(cursor, &raw_key, &raw_key_size);
+            if (rc != LSM_OK) {
+                lsm_csr_close(cursor);
+                return make_error(env, rc);
+            }
+            rc = lsm_delete(db, raw_key, raw_key_size);
+            if (rc != LSM_OK) {
+                lsm_csr_close(cursor);
+                make_error(env, rc);
+            }
+            rc = lsm_csr_close(cursor);
+            if (rc != LSM_OK) return make_error(env, rc);
+            return ATOM_OK;
+        } else {
+            return make_error(env, rc);
+        }
     }
     return ATOM_BADARG;
 }
@@ -485,43 +516,43 @@ static ERL_NIF_TERM __op_worker(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
     ErlNifBinary config;
 
     if (enif_get_resource(env, argv[0], lsm_tree_RESOURCE, (void**)&tree_handle) &&
-        enif_inspect_binary(env, argv[1], &config))
-    {
+        enif_inspect_binary(env, argv[1], &config)) {
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
 
-        switch (op)
-          {
-          // Run recovery on a corrupt database in hopes of returning it to a usable state.
-          case LSM_OP_SALVAGE: //TODO
+        switch (op) {
+        case LSM_OP_SALVAGE: //TODO
+            // Run recovery on a corrupt database in hopes of returning it to a usable state.
             break;
-          // Attempt to flush the contents of the in-memory tree to disk.
+
           case LSM_OP_FLUSH:
-            rc = lsm_work(db, LSM_WORK_FLUSH, 0, 0);
-            return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
-          // Write a checkpoint (if one exists in memory) to the database file.
-          case LSM_OP_CHECKPOINT:
+              // Attempt to flush the contents of the in-memory tree to disk.
+              rc = lsm_work(db, LSM_WORK_FLUSH, 0, 0);
+              return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
+
+        case LSM_OP_CHECKPOINT:
+            // Write a checkpoint (if one exists in memory) to the database file.
             rc = lsm_work(db, LSM_WORK_CHECKPOINT, 0, 0);
             return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
-          // Empties an open database of all key/value pairs, may not reduce on-disk files.
-          case LSM_OP_TRUNCATE: //TODO
+        case LSM_OP_TRUNCATE: //TODO
+            // Empties an open database of all key/value pairs, may not reduce on-disk files.
             break;
-          // Runs the merge worker process to compact on disk files.
-          case LSM_OP_COMPACT: //TODO
+        case LSM_OP_COMPACT: //TODO
+            // Runs the merge worker process to compact on disk files.
             rc = lsm_work(db, LSM_WORK_OPTIMIZE, 0, 0);
             return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
             break;
-          // Close the database and delete all files on disk, handle is invalid after this.
-          case LSM_OP_DESTROY: //TODO
+        case LSM_OP_DESTROY: //TODO
+            // Close the database and delete all files on disk, handle is invalid after this.
             break;
-          // Upgrades on-disk files from one version's format to the next.
-          case LSM_OP_UPGRADE: //TODO
+        case LSM_OP_UPGRADE: //TODO
+            // Upgrades on-disk files from one version's format to the next.
             break;
-          // Verifies the integrity of the files on disk as consistent.
-          case LSM_OP_VERIFY: //TODO
+        case LSM_OP_VERIFY: //TODO
+            // Verifies the integrity of the files on disk as consistent.
             break;
-          default:; /* FALLTHRU */
-          }
+        default:; /* FALLTHRU */
+        }
         return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
     }
     return ATOM_BADARG;
@@ -570,13 +601,13 @@ static ERL_NIF_TERM lsm_cursor_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM
         LsmCursorHandle* cursor_handle = enif_alloc_resource(lsm_cursor_RESOURCE, sizeof(LsmCursorHandle));
         enif_release_resource(cursor_handle);
         if (cursor_handle == 0) return ATOM_ENOMEM;
+        cursor_handle->tree_handle = tree_handle;
         lsm_cursor* cursor = cursor_handle->pCsr;
         rc = lsm_csr_open(db, &cursor);
         if (rc != LSM_OK) return make_error(env, rc);
-        else {
-          ERL_NIF_TERM result = enif_make_resource(env, cursor_handle);
-          return enif_make_tuple2(env, ATOM_OK, result);
-        }
+        ERL_NIF_TERM result = enif_make_resource(env, cursor_handle);
+        enif_keep_resource(tree_handle);
+        return enif_make_tuple2(env, ATOM_OK, result);
     }
     return ATOM_BADARG;
 }
@@ -586,6 +617,7 @@ static ERL_NIF_TERM lsm_cursor_close(ErlNifEnv* env, int argc, const ERL_NIF_TER
 {
     LsmCursorHandle *cursor_handle;
     if (enif_get_resource(env, argv[0], lsm_cursor_RESOURCE, (void**)&cursor_handle)) {
+        enif_release_resource(cursor_handle->tree_handle);
         lsm_cursor* cursor = cursor_handle->pCsr;
         int rc = lsm_csr_close(cursor);
         return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
@@ -607,25 +639,22 @@ static ERL_NIF_TERM lsm_cursor_position(ErlNifEnv* env, int argc, const ERL_NIF_
         lsm_cursor* cursor = cursor_handle->pCsr;
         rc = lsm_csr_seek(cursor, key.data, key.size, LSM_SEEK_EQ); //TODO support _GE and _LE
         if (rc == LSM_OK) {
-            if (lsm_csr_valid(cursor) == LSM_NOTFOUND) {
-                return ATOM_NOTFOUND;
+            if (lsm_csr_invalid(cursor)) return ATOM_NOTFOUND;
+            void *raw_key;
+            int raw_size;
+            rc = lsm_csr_key(cursor, &raw_key, &raw_size);
+            if (rc != LSM_OK) {
+                return make_error(env, rc);
             } else {
-                void *raw_key;
-                int raw_size;
-                rc = lsm_csr_key(cursor, &raw_key, &raw_size);
-                if (rc != LSM_OK) {
-                    return make_error(env, rc);
+                if (raw_size != key.size || __compare_keys(raw_key, raw_size, key.data, key.size)) {
+                    // Not an exact EQ match, return partially matching key we found.
+                    ERL_NIF_TERM partial_key;
+                    unsigned char* bin = enif_make_new_binary(env, raw_size, &partial_key);
+                    if (!bin) return ATOM_ENOMEM;
+                    memcpy(bin, raw_key, raw_size);
+                    return enif_make_tuple2(env, ATOM_OK, partial_key);
                 } else {
-                    if (raw_size != key.size || __compare_keys(raw_key, raw_size, key.data, key.size)) {
-                        // Not an exact EQ match, return partially matching key we found.
-                        ERL_NIF_TERM partial_key;
-                        unsigned char* bin = enif_make_new_binary(env, raw_size, &partial_key);
-                        if (!bin) return ATOM_ENOMEM;
-                        memcpy(bin, raw_key, raw_size);
-                        return enif_make_tuple2(env, ATOM_OK, partial_key);
-                    } else {
-                        return ATOM_OK;
-                    }
+                    return ATOM_OK;
                 }
             }
         } else {
@@ -751,6 +780,26 @@ static ERL_NIF_TERM lsm_cursor_last(ErlNifEnv* env, int argc, const ERL_NIF_TERM
     if (enif_get_resource(env, argv[0], lsm_cursor_RESOURCE, (void**)&cursor_handle)) {
         lsm_cursor* cursor = cursor_handle->pCsr;
         int rc = lsm_csr_last(cursor);
+        return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
+    }
+    return ATOM_BADARG;
+}
+
+//-spec cursor_delete(cursor()) -> ok | {error, term()}.
+static ERL_NIF_TERM lsm_cursor_delete(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    LsmCursorHandle *cursor_handle;
+    if (enif_get_resource(env, argv[0], lsm_cursor_RESOURCE, (void**)&cursor_handle)) {
+        lsm_cursor* cursor = cursor_handle->pCsr;
+        void* raw_key;
+        int raw_key_size;
+        int rc = lsm_csr_key(cursor, &raw_key, &raw_key_size);
+        if (rc == LSM_OK) {
+            lsm_db* db = cursor_handle->tree_handle->pDb;
+            rc = lsm_delete(db, raw_key, raw_key_size);
+        } else {
+            return make_error(env, rc);
+        }
         return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
     }
     return ATOM_BADARG;

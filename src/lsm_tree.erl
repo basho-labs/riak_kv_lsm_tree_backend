@@ -63,6 +63,7 @@
          , cursor_prev_value/1
          , cursor_first/1
          , cursor_last/1
+         , cursor_delete/1
          % TODO is_empty/1, count/1, size/1, txn_begin/2, txn_begin/3, txn_commit/2,
          % TODO either transact/? or txn_abort/2, snapshot/1, stat/2
          ]).
@@ -136,7 +137,7 @@ get(_Ref, _Key) ->
 put(_Ref, _Key, _Value) ->
     ?nif_stub.
 
--spec delete(tree(), key()) -> ok | {error, term()}.
+-spec delete(tree(), key()) -> ok | not_found | {error, term()}.
 delete(_Ref, _Key) ->
     ?nif_stub.
 
@@ -218,6 +219,10 @@ cursor_first(_Cursor) ->
 
 -spec cursor_last(cursor()) -> ok | {error, term()}.
 cursor_last(_Cursor) ->
+    ?nif_stub.
+
+-spec cursor_delete(cursor()) -> ok | {error, term()}.
+cursor_delete(_Ref) ->
     ?nif_stub.
 
 -type fold_keys_fun() :: fun((Key::binary(), any()) -> any()).
