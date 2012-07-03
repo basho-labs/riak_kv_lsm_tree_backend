@@ -189,11 +189,7 @@ static ERL_NIF_TERM __make_error(ErlNifEnv* env, int rc)
     case LSM_MISUSE:         return __error_msg(env, "lsm_misuse", file, line);
     case LSM_ERROR: default:;/* FALLTHRU */
     }
-#if defined(TEST) || defined(DEBUG)
-  return __error_msg(env, "lsm_error", file, line);
-#else
-  return __error_msg(env, "lsm_error");
-#endif
+  return __error_msg(env, "lsm_error", __FILE__, __LINE__);
 }
 
 static int __compare_keys(const void *key1, int n1, const void *key2, int n2)
