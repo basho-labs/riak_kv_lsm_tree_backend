@@ -599,14 +599,15 @@ static ERL_NIF_TERM lsm_cursor_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
         LsmCursorHandle* cursor_handle = enif_alloc_resource(lsm_cursor_RESOURCE, sizeof(LsmCursorHandle));
-        enif_release_resource(cursor_handle);
         if (cursor_handle == 0) return ATOM_ENOMEM;
         cursor_handle->tree_handle = tree_handle;
-        lsm_cursor* cursor = cursor_handle->pCsr;
+        lsm_cursor* cursor;
         rc = lsm_csr_open(db, &cursor);
         if (rc != LSM_OK) return make_error(env, rc);
+        cursor_handle->pCsr = cursor;
         ERL_NIF_TERM result = enif_make_resource(env, cursor_handle);
         enif_keep_resource(tree_handle);
+        enif_release_resource(cursor_handle);
         return enif_make_tuple2(env, ATOM_OK, result);
     }
     return ATOM_BADARG;
