@@ -770,7 +770,11 @@ static ERL_NIF_TERM __cursor_np_worker(ErlNifEnv* env, int argc, const ERL_NIF_T
             else
                 rc = lsm_csr_prev(cursor);
             return rc == LSM_OK ? result : make_error(env, rc);
+        } else if (rc == LSM_MISUSE) {
+            if (lsm_csr_invalid(cursor))
+                return ATOM_BADARG;
         }
+        return __make_error(env, rc);
     }
     return ATOM_BADARG;
 }
