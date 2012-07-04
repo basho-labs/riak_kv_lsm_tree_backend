@@ -300,10 +300,17 @@ drop(#state{ tree=Tree, partition=Partition, config=Config }=State) ->
     end.
 
 %% @doc Returns true if this lsm_tree backend contains any
-%% non-tombstone values; otherwise returns false.
+%% values; otherwise returns false.
 -spec is_empty(state()) -> boolean().
-is_empty(#state{tree=Tree}) ->
-    lsm_tree:is_empty(Tree).
+is_empty(Tree) ->
+    FoldFun = fun(K, _V, Acc) -> [K|Acc] end,
+    try
+        Range = to_key_range(undefined),
+        [] =:= lsm_tree:fold_range(Tree, FoldFun, [], Range#key_range{ limit=1 })
+    catch
+        _:ok ->
+            false
+    end.
 
 %% @doc Get the status information for this lsm_tree backend
 -spec status(state()) -> [{atom(), term()}].
