@@ -106,7 +106,6 @@ static ERL_NIF_TERM lsm_tree_compact(ErlNifEnv* env, int argc, const ERL_NIF_TER
 static ERL_NIF_TERM lsm_tree_destroy(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_tree_upgrade(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_tree_verify(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-//TODO: static ERL_NIF_TERM lsm_tree_count(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 typedef ERL_NIF_TERM (*CursorRetFun)(ErlNifEnv* env, lsm_cursor* cursor, int rc);
 
