@@ -95,9 +95,9 @@ static ERL_NIF_TERM lsm_cursor_next_value(ErlNifEnv* env, int argc, const ERL_NI
 static ERL_NIF_TERM lsm_cursor_prev_key(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_cursor_prev_value(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_cursor_delete(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-//static ERL_NIF_TERM lsm_txn_begin(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-//static ERL_NIF_TERM lsm_txn_commit(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-//static ERL_NIF_TERM lsm_txn_abort(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM lsm_txn_begin(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM lsm_txn_commit(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM lsm_txn_abort(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_tree_salvage(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_tree_flush(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM lsm_tree_checkpoint(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -137,9 +137,9 @@ static ErlNifFunc nif_funcs[] =
     {"cursor_first",      1, lsm_cursor_first},
     {"cursor_last",       1, lsm_cursor_last},
     {"cursor_delete",     1, lsm_cursor_delete},
-//    {"txn_begin",         2, lsm_txn_begin},
-//    {"txn_commit",        2, lsm_txn_commit},
-//    {"txn_abort",         2, lsm_txn_abort},
+    {"txn_begin",         2, lsm_txn_begin},
+    {"txn_commit",        2, lsm_txn_commit},
+    {"txn_abort",         2, lsm_txn_abort},
 };
 
 
@@ -847,40 +847,61 @@ static ERL_NIF_TERM lsm_cursor_delete(ErlNifEnv* env, int argc, const ERL_NIF_TE
     return ATOM_BADARG;
 }
 
-#if 0
-//TODO txn suport
+/* Transactions:
+ *   level==1 -- begin an outermost read transaction
+ *   level==2 -- begin an outermost write transaction
+ *   level>2  -- begin a nested write transaction
+ *
+ * 'level' may not be less than 1.  After this routine returns successfully
+ * the transaction level will be equal to level.  The transaction level
+ * must be at least 1 to read and at least 2 to write.
+ */
 static ERL_NIF_TERM lsm_txn_begin(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     LsmTreeHandle* tree_handle;
-    if (enif_get_resource(env, argv[0], lsm_tree_RESOURCE, (void**)&tree_handle))
-    {
-        int rc = LSM_OK;
-        lsm_db* db = tree_handle->pDb;
-        LsmCursorHandle* cursor_handle = enif_alloc_resource(lsm_cursor_RESOURCE, sizeof(LsmCursorHandle));
-        if (cursor_handle == 0) return ATOM_ENOMEM;
-        lsm_cursor* cursor = cursor_handle->pCsr;
-        if (cursor == 0) return ATOM_ENOMEM;
-        rc = lsm_csr_open(db, &cursor);
-        if (rc != LSM_OK) {
-          enif_release_resource(cursor_handle);
-          return make_error(env, rc);
-        } else {
-          ERL_NIF_TERM result = enif_make_resource(env, cursor_handle);
-          enif_release_resource(cursor_handle);
-          return enif_make_tuple2(env, ATOM_OK, result);
-        }
-    }
-    return ATOM_BADARG;
+    int level = 0;
+
+    if (!(enif_get_resource(env, argv[0], lsm_tree_RESOURCE, (void**)&tree_handle) &&
+          enif_get_int(env, argv[1], &level)) || level < 1)
+        return ATOM_BADARG;
+
+    int rc = LSM_OK;
+    lsm_db* db = tree_handle->pDb;
+    rc = lsm_begin(db, level);
+    return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
 }
 
 static ERL_NIF_TERM lsm_txn_commit(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
+    LsmTreeHandle* tree_handle;
+    int level = 0;
+
+    if (!(enif_get_resource(env, argv[0], lsm_tree_RESOURCE, (void**)&tree_handle) &&
+          enif_get_int(env, argv[1], &level)) || level < 1)
+        return ATOM_BADARG;
+
+    int rc = LSM_OK;
+    lsm_db* db = tree_handle->pDb;
+    rc = lsm_commit(db, level);
+    return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
 }
 
 static ERL_NIF_TERM lsm_txn_abort(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
+    LsmTreeHandle* tree_handle;
+    int level = 0;
+
+    if (!(enif_get_resource(env, argv[0], lsm_tree_RESOURCE, (void**)&tree_handle) &&
+          enif_get_int(env, argv[1], &level)) || level < 1)
+        return ATOM_BADARG;
+
+    int rc = LSM_OK;
+    lsm_db* db = tree_handle->pDb;
+    rc = lsm_rollback(db, level);
+    return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
 }
 
+#if 0 //TODO
 static ERL_NIF_TERM lsm_snapshot??(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
 }

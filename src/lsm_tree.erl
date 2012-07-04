@@ -65,8 +65,9 @@
          , cursor_first/1
          , cursor_last/1
          , cursor_delete/1
-         % TODO is_empty/1, count/1, size/1, txn_begin/2, txn_begin/3, txn_commit/2,
-         % TODO either transact/? or txn_abort/2, snapshot/1, stat/2
+         , txn_begin/2, txn_commit/2, txn_abort/2, txn_rollback/2
+         , transact/2
+         % TODO snapshot/1, stat/2
          ]).
 
 -include("include/lsm_tree.hrl").
@@ -81,9 +82,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--type config_list() :: [{atom(), any()}].
 -opaque tree() :: reference().
 -opaque cursor() :: reference().
+-opaque txn() :: pos_integer().
+-type config_list() :: [{atom(), any()}].
 -type key() :: binary().
 -type value() :: binary().
 
@@ -230,7 +232,62 @@ cursor_last(_Cursor) ->
 cursor_delete(_Ref) ->
     ?nif_stub.
 
--type fold_keys_fun() :: fun((Key::binary(), any()) -> any()).
+-spec txn_begin(tree(), txn()) -> ok | {error, term()}.
+txn_begin(_Ref, _Txn) ->
+    ?nif_stub.
+
+-spec txn_commit(tree(), txn()) -> ok | {error, term()}.
+txn_commit(_Ref, _Txn) ->
+    ?nif_stub.
+
+-spec txn_rollback(tree(), txn()) -> ok | {error, term()}.
+txn_rollback(Ref, Txn) ->
+    txn_abort(Ref, Txn).
+
+-spec txn_abort(tree(), txn()) -> ok | {error, term()}.
+txn_abort(_Ref, _Txn) ->
+    ?nif_stub.
+
+-type transact_spec() :: {put, key(), value()} | {delete, value()}.
+
+-spec do_transact(tree(), txn(), [transact_spec()]) -> ok | {error, term()}.
+do_transact(Tree, Txn, [{put, Key, Value} | Rest]) ->
+    case lsm_tree:put(Tree, Key, Value) of
+        ok ->
+            do_transact(Tree, Txn, Rest);
+        {error, Reason} ->
+            {error, Reason}
+    end;
+do_transact(Tree, Txn, [{delete, Key} | Rest]) ->
+    case lsm_tree:delete(Tree, Key) of
+        ok ->
+            do_transact(Tree, Txn, Rest);
+        {error, Reason} ->
+            {error, Reason}
+    end;
+do_transact(_Tree, _Txn, []) ->
+    ok.
+
+-spec transact(tree(), [transact_spec()]) -> ok | {error, term()}.
+transact(Tree, TransactionSpec) ->
+    Txn = 2,
+    try
+        txn_begin(Tree, Txn),
+        case do_transact(Tree, Txn, TransactionSpec) of
+            ok ->
+                txn_commit(Tree, Txn);
+            {error, Reason} ->
+                txn_abort(Tree, Txn),
+                {error, Reason}
+        end
+    catch
+        Class:Exception ->
+            ?log("Exception in lsm_tree transact: ~p ~p", [Exception, erlang:get_stacktrace()]),
+            txn_abort(Tree, Txn),
+            {error, {Class, Exception, erlang:get_stacktrace()}}
+    end.
+
+-type fold_keys_fun() :: fun((key(), any()) -> any()).
 
 -spec fold_keys(cursor(), fold_keys_fun(), any()) -> any().
 fold_keys(Cursor, Fun, Acc0) ->
