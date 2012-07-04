@@ -96,27 +96,23 @@ start(Partition, Config) ->
             lager:error("Failed to create lsm_tree dir: data_root is not set"),
             {error, data_root_unset};
         DataRoot ->
-            AppStart = case application:start(lsm_tree) of
-                           ok ->
-                               ok;
-                           {error, {already_started, _}} ->
-                               ok;
-                           {error, StartReason} ->
-                               lager:error("Failed to init the lsm_tree backend: ~p", [StartReason]),
-                               {error, StartReason}
-                       end,
+            AppStart =
+                case application:start(lsm_tree) of
+                    ok ->
+                        ok;
+                    {error, {already_started, _}} ->
+                        ok;
+                    {error, StartReason} ->
+                        lager:error("Failed to init the lsm_tree backend: ~p", [StartReason]),
+                        {error, StartReason}
+                end,
             case AppStart of
                 ok ->
-                    case get_data_dir(DataRoot, integer_to_list(Partition)) of
-                        {ok, DataDir} ->
-                            case lsm_tree:open(DataDir, Config) of
-                                {ok, Tree} ->
-                                    {ok, #state{tree=Tree, partition=Partition, config=Config }};
-                                {error, OpenReason}=OpenError ->
-                                    lager:error("Failed to open lsm_tree: ~p\n", [OpenReason]),
-                                    OpenError
-                            end;
-                        {error, Reason} ->
+                    PartitionFilename = filename:join([filename:absname(DataRoot), integer_to_list(Partition)]),
+                    case lsm_tree:open(PartitionFilename, Config) of
+                        {ok, Tree} ->
+                            {ok, #state{tree=Tree, partition=Partition, config=Config }};
+                        {error, Reason}=OpenError ->
                             lager:error("Failed to start lsm_tree backend: ~p\n", [Reason]),
                             {error, Reason}
                     end;
