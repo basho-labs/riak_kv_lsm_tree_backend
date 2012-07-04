@@ -305,7 +305,7 @@ foldl_keys(_Cursor, _Fun, Acc, not_found) ->
 foldl_keys(Cursor, Fun, Acc, {ok, Key}) ->
     foldl_keys(Cursor, Fun, Fun(Key, Acc), cursor_prev_key(Cursor)).
 
--type fold_values_fun() :: fun((Key::binary(), any()) -> any()).
+-type fold_values_fun() :: fun((key(), any()) -> any()).
 
 -spec fold_values(cursor(), fold_values_fun(), any()) -> any().
 fold_values(Cursor, Fun, Acc0) ->
@@ -323,7 +323,7 @@ foldl_values(_Cursor, _Fun, Acc, not_found) ->
 foldl_values(Cursor, Fun, Acc, {ok, Key}) ->
     foldl_values(Cursor, Fun, Fun(Key, Acc), cursor_prev_value(Cursor)).
 
--type fold_fun() :: fun(({Key::binary(), Value::binary()}, any()) -> any()).
+-type fold_fun() :: fun(({key(), value()}, any()) -> any()).
 
 -spec fold(cursor(), fold_fun(), any()) -> any().
 fold(Cursor, Fun, Acc0) ->
