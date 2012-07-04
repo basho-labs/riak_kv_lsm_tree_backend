@@ -329,18 +329,6 @@ callback(_Ref, _Msg, State) ->
 %% ===================================================================
 
 %% @private
-%% Create the directory for this partition's LSM-BTree files
-get_data_dir(DataRoot, Partition) ->
-    PartitionDir = filename:join([DataRoot, Partition]),
-    case filelib:ensure_dir(filename:join([filename:absname(DataRoot), Partition, "x"])) of
-        ok ->
-            {ok, PartitionDir};
-        {error, Reason} ->
-            lager:error("Failed to create lsm_tree dir ~s: ~p", [PartitionDir, Reason]),
-            {error, Reason}
-    end.
-
-%% @private
 %% Return a function to fold over keys on this backend
 fold_keys_fun(FoldKeysFun, undefined) ->
     %% Fold across everything...
