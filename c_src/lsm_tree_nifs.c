@@ -150,11 +150,6 @@ static ERL_NIF_TERM make_atom(ErlNifEnv* env, const char* name)
   return enif_make_atom(env, name);
 }
 
-//static ERL_NIF_TERM make_ok(ErlNifEnv* env, ERL_NIF_TERM msg)
-//{
-//  return enif_make_tuple2(env, ATOM_OK, msg);
-//}
-
 #if defined(TEST) || defined(DEBUG)
 #define make_error_msg(__env, __msg) __make_error_msg(__env, __msg, __FILE__, __LINE__)
 static ERL_NIF_TERM __make_error_msg(ErlNifEnv* env, const char* msg, char *file, int line)
