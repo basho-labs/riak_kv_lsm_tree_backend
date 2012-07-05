@@ -44,10 +44,13 @@ static lsm_env erl_nif_env;
 
 typedef struct {
     lsm_db *pDb;                       /* LSM database handle */
+    lsm_cursor* pSharedCsr;            /* for use in get() and delete() */
+    int txn_depth;                     /* inner most transaction */
 } LsmTreeHandle;
 
 typedef struct {
     lsm_cursor *pCsr;                  /* LSM cursor handle */
+    int txn_id;                        /* always > 2 */
     LsmTreeHandle *tree_handle;
 } LsmCursorHandle;
 
@@ -368,6 +371,7 @@ static ERL_NIF_TERM lsm_tree_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
 
     LsmTreeHandle* tree_handle = enif_alloc_resource(lsm_tree_RESOURCE, sizeof(LsmTreeHandle));
     if (!tree_handle) return ATOM_ENOMEM;
+    memset(tree_handle, 0, sizeof(LsmTreeHandle));
 
     lsm_db* db;
     int rc = lsm_new(&erl_nif_env, &db);
@@ -394,15 +398,6 @@ static ERL_NIF_TERM lsm_tree_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
       return make_error(env, rc);
     }
 
-    // This initializes the outermost transactional context, all user
-    // transactions will be > 1.
-    rc = lsm_begin(db, 1);
-    if (rc != LSM_OK) {
-        enif_release_resource(tree_handle);
-        lsm_close(db);
-        return make_error(env, rc);
-    }
-
     tree_handle->pDb = db;
     ERL_NIF_TERM result = enif_make_resource(env, tree_handle);
     enif_release_resource(tree_handle);
@@ -418,9 +413,39 @@ static ERL_NIF_TERM lsm_tree_close(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
     if (!enif_get_resource(env, argv[0], lsm_tree_RESOURCE, (void**)&tree_handle))
       return ATOM_BADARG;
 
-    /* NOTE: All open cursors must be closed first, or this will fail! */
-    rc = lsm_close(tree_handle->pDb);
+    lsm_db* db = tree_handle->pDb;
+
+    /* Rollback any uncommitted write transactions */
+    if (tree_handle->txn_depth >= 2)
+        lsm_rollback(db, tree_handle->txn_depth);
+
+    /* Close the shared cursor */
+    lsm_cursor* cursor = tree_handle->pSharedCsr;
+    if (cursor)
+        lsm_csr_close(cursor);
+
+    /* At this point all open cursors should be closed, otherwise this will fail (misuse) */
+    rc = lsm_close(db);
     return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
+}
+
+static int __shared_cursor(ErlNifEnv* env, LsmTreeHandle* tree_handle)
+{
+    if (tree_handle->pSharedCsr)
+        return LSM_OK;
+
+    lsm_db* db = tree_handle->pDb;
+    int rc = LSM_OK;
+    rc = lsm_csr_open(db, &tree_handle->pSharedCsr);
+    if (rc != LSM_OK) return make_error(env, rc);
+    rc = lsm_begin(db, 1);
+    if (rc != LSM_OK) {
+        lsm_csr_close(tree_handle->pSharedCsr);
+        tree_handle->pSharedCsr = 0;
+        return make_error(env, rc);
+    }
+    tree_handle->txn_depth = 1 > tree_handle->txn_depth ? 1 : tree_handle->txn_depth;
+    return LSM_OK;
 }
 
 //-spec get(tree(), key()) -> {ok, value()} | not_found | {error, term()}.
@@ -434,10 +459,10 @@ static ERL_NIF_TERM lsm_tree_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
             return ATOM_BADARG;
 
         int rc = LSM_OK;
-        lsm_db* db = tree_handle->pDb;
-        lsm_cursor* cursor = 0;
-        rc = lsm_csr_open(db, &cursor);
+        rc = __shared_cursor(env, tree_handle);
         if (rc != LSM_OK) return make_error(env, rc);
+        lsm_cursor* cursor = tree_handle->pSharedCsr;
+
         rc = lsm_csr_seek(cursor, key.data, key.size, LSM_SEEK_EQ);
         if (rc == LSM_OK) {
             if (lsm_csr_invalid(cursor)) return ATOM_NOTFOUND;
@@ -446,16 +471,17 @@ static ERL_NIF_TERM lsm_tree_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
             rc = lsm_csr_value(cursor, &raw_value, &raw_value_size);
             if (rc != LSM_OK) {
                 lsm_csr_close(cursor);
+                tree_handle->pSharedCsr = 0;
                 return make_error(env, rc);
             }
-            rc = lsm_csr_close(cursor);
-            if (rc != LSM_OK) return make_error(env, rc);
             ERL_NIF_TERM value;
             unsigned char* bin = enif_make_new_binary(env, raw_value_size, &value);
             if (!bin) return ATOM_ENOMEM;
             memcpy(bin, raw_value, raw_value_size);
             return enif_make_tuple2(env, ATOM_OK, value);
         } else {
+            lsm_csr_close(cursor);
+            tree_handle->pSharedCsr = 0;
             return make_error(env, rc);
         }
     }
@@ -475,6 +501,7 @@ static ERL_NIF_TERM lsm_tree_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
 
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
+
         rc = lsm_write(db, key.data, key.size, value.data, value.size);
         return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
     }
@@ -493,9 +520,10 @@ static ERL_NIF_TERM lsm_tree_delete(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
-        lsm_cursor* cursor = 0;
-        rc = lsm_csr_open(db, &cursor);
+        rc = __shared_cursor(env, tree_handle);
         if (rc != LSM_OK) return make_error(env, rc);
+        lsm_cursor* cursor = tree_handle->pSharedCsr;
+
         rc = lsm_csr_seek(cursor, key.data, key.size, LSM_SEEK_EQ);
         if (rc == LSM_OK) {
             if (lsm_csr_invalid(cursor)) return ATOM_NOTFOUND;
@@ -503,16 +531,21 @@ static ERL_NIF_TERM lsm_tree_delete(ErlNifEnv* env, int argc, const ERL_NIF_TERM
             int raw_key_size;
             rc = lsm_csr_key(cursor, &raw_key, &raw_key_size);
             if (rc != LSM_OK) {
+                lsm_rollback(db, 2);
                 lsm_csr_close(cursor);
                 return make_error(env, rc);
             }
+
+// TODO: do we need a new txn around the delete?
+//            rc = lsm_begin(db, tree_handle->txn_depth+1); // race?
+//            if (rc != LSM_OK) return make_error(env, rc);
+
             rc = lsm_delete(db, raw_key, raw_key_size);
             if (rc != LSM_OK) {
                 lsm_csr_close(cursor);
-                make_error(env, rc);
+                tree_handle->pSharedCsr = 0;
+                return make_error(env, rc);
             }
-            rc = lsm_csr_close(cursor);
-            if (rc != LSM_OK) return make_error(env, rc);
             return ATOM_OK;
         } else {
             return make_error(env, rc);
@@ -620,8 +653,13 @@ static ERL_NIF_TERM lsm_cursor_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM
         lsm_db* db = tree_handle->pDb;
         LsmCursorHandle* cursor_handle = enif_alloc_resource(lsm_cursor_RESOURCE, sizeof(LsmCursorHandle));
         if (cursor_handle == 0) return ATOM_ENOMEM;
+        memset(cursor_handle, 0, sizeof(LsmCursorHandle));
         cursor_handle->tree_handle = tree_handle;
         lsm_cursor* cursor;
+
+        rc = lsm_begin(db, 1);
+        if (rc != LSM_OK) return  make_error(env, rc);
+
         rc = lsm_csr_open(db, &cursor);
         if (rc != LSM_OK) return make_error(env, rc);
         cursor_handle->pCsr = cursor;
