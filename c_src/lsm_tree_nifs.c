@@ -1,26 +1,20 @@
-// -*- coding: utf-8; Mode: c; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*-
-// ex: set softtabstop=4 tabstop=4 shiftwidth=4 expandtab fileencoding=utf-8:
-
-// ----------------------------------------------------------------------------
-//
-// lsm_tree: A Riak/KV backend using SQLite4's Log-Structured Merge Tree
-//
-// Copyright 2012 (c) Basho Technologies, Inc.  All Rights Reserved.
-// http://basho.com/ info@basho.com
-//
-// This file is provided to you under the Apache License, Version 2.0 (the
-// "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//   http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
-// License for the specific language governing permissions and limitations
-// under the License.
-//
-// ----------------------------------------------------------------------------
+/*
+ * lsm_tree: A Riak/KV backend using SQLite4's Log-Structured Merge Tree
+ *
+ * Copyright (c) 2012 Basho Technologies, Inc. All Rights Reserved.
+ *
+ * This file is provided to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at:
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ */
 
 #include "erl_nif.h"
 #include "erl_driver.h"
@@ -147,10 +141,10 @@ static ErlNifFunc nif_funcs[] =
 
 static ERL_NIF_TERM make_atom(ErlNifEnv* env, const char* name)
 {
-  ERL_NIF_TERM ret;
-  if(enif_make_existing_atom(env, name, &ret, ERL_NIF_LATIN1))
-    return ret;
-  return enif_make_atom(env, name);
+    ERL_NIF_TERM ret;
+    if(enif_make_existing_atom(env, name, &ret, ERL_NIF_LATIN1))
+      return ret;
+    return enif_make_atom(env, name);
 }
 
 #if defined(TEST) || defined(DEBUG)
@@ -162,11 +156,11 @@ static ERL_NIF_TERM __make_error_msg(ErlNifEnv* env, const char* msg)
 #endif
 {
 #if defined(TEST) || defined(DEBUG)
-  static char buf[MAXPATHLEN+1024];
-  snprintf(buf, 1024, "%s at %s:%d", msg, file, line);
-  return enif_make_tuple2(env, ATOM_ERROR, make_atom(env, msg));
+    static char buf[MAXPATHLEN+1024];
+    snprintf(buf, 1024, "%s at %s:%d", msg, file, line);
+    return enif_make_tuple2(env, ATOM_ERROR, make_atom(env, msg));
 #else
-  return enif_make_tuple2(env, ATOM_ERROR, make_atom(env, msg));
+    return enif_make_tuple2(env, ATOM_ERROR, make_atom(env, msg));
 #endif
 }
 

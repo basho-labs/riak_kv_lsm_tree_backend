@@ -4,4 +4,3 @@ priv
 c_src/*.o
 *~
 .eunit
-/.fractal_btree.plt

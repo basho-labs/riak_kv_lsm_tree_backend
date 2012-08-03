@@ -19,7 +19,7 @@
 **   be less than 2^15 records on each page.
 **
 **   Each page ends with a footer that describes the pages contents. This
-**   footer serves as similar purpose to the page header in an SQLite database.
+**   footer serves as similar purpose to the page header in a database.
 **   A footer is used instead of a header because it makes it easier to
 **   populate a new page based on a sorted list of key/value pairs.
 **

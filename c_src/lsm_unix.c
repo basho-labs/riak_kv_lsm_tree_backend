@@ -32,8 +32,6 @@
 
 #include "lsmInt.h"
 
-extern int os_fdatasync(int);
-
 /*
 ** An open file is an instance of the following object
 */
@@ -49,7 +47,7 @@ static int lsm_ioerr(void){ return LSM_IOERR; }
 
 static int lsmPosixOsOpen(
   lsm_env *pEnv,
-  const char *zFile,
+  const char *zFile, 
   lsm_file **ppFile
 ){
   int rc = LSM_OK;
@@ -123,7 +121,7 @@ static int lsmPosixOsRead(
     rc = lsm_ioerr();
   }else{
     ssize_t prc = read(p->fd, pData, (size_t)nData);
-    if( prc<0 ){
+    if( prc<0 ){ 
       rc = lsm_ioerr();
     }else if( prc<nData ){
       memset(&((u8 *)pData)[prc], 0, nData - prc);
@@ -158,8 +156,8 @@ static int lsmPosixOsSectorSize(lsm_file *pFile){
 }
 
 static int lsmPosixOsRemap(
-  lsm_file *pFile,
-  lsm_i64 iMin,
+  lsm_file *pFile, 
+  lsm_i64 iMin, 
   void **ppOut,
   lsm_i64 *pnOut
 ){
@@ -236,7 +234,7 @@ static int lsmPosixOsFullpath(
 }
 
 static int lsmPosixOsFileid(
-  lsm_file *pFile,
+  lsm_file *pFile, 
   void *pBuf,
   int *pnBuf
 ){
@@ -283,7 +281,7 @@ static void *lsmPosixOsRealloc(lsm_env *pEnv, void *p, int N){
 }
 
 
-#ifdef LSM_MUTEX_PTHREADS
+#ifdef LSM_MUTEX_PTHREADS 
 /*************************************************************************
 ** Mutex methods for pthreads based systems.  If LSM_MUTEX_PTHREADS is
 ** missing then a no-op implementation of mutexes found in lsm_mutex.c
@@ -425,12 +423,12 @@ static int lsmPosixOsMutexNew(lsm_env *pEnv, lsm_mutex **ppNew){
   *ppNew = (lsm_mutex *)p;
   return (p ? LSM_OK : LSM_NOMEM_BKPT);
 }
-static void lsmPosixOsMutexDel(lsm_mutex *pMutex)  {
+static void lsmPosixOsMutexDel(lsm_mutex *pMutex)  { 
   NoopMutex *p = (NoopMutex *)pMutex;
   assert( p->bStatic==0 && p->pEnv );
   lsmFree(p->pEnv, p);
 }
-static void lsmPosixOsMutexEnter(lsm_mutex *pMutex){
+static void lsmPosixOsMutexEnter(lsm_mutex *pMutex){ 
   NoopMutex *p = (NoopMutex *)pMutex;
   assert( p->bHeld==0 );
   p->bHeld = 1;
@@ -441,17 +439,17 @@ static int lsmPosixOsMutexTry(lsm_mutex *pMutex){
   p->bHeld = 1;
   return 0;
 }
-static void lsmPosixOsMutexLeave(lsm_mutex *pMutex){
+static void lsmPosixOsMutexLeave(lsm_mutex *pMutex){ 
   NoopMutex *p = (NoopMutex *)pMutex;
   assert( p->bHeld==1 );
   p->bHeld = 0;
 }
 #ifdef LSM_DEBUG
-static int lsmPosixOsMutexHeld(lsm_mutex *pMutex){
+static int lsmPosixOsMutexHeld(lsm_mutex *pMutex){ 
   NoopMutex *p = (NoopMutex *)pMutex;
   return p ? p->bHeld : 1;
 }
-static int lsmPosixOsMutexNotHeld(lsm_mutex *pMutex){
+static int lsmPosixOsMutexNotHeld(lsm_mutex *pMutex){ 
   NoopMutex *p = (NoopMutex *)pMutex;
   return p ? !p->bHeld : 1;
 }

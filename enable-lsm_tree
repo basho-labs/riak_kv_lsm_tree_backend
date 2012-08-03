@@ -51,7 +51,7 @@ fi
 ./rebar get-deps
 
 rm -rf dev
-make all devrel
+make all stagedevrel
 
 echo
 echo 'Modifying all dev/dev*/etc/app.config files, saving originals with .orig suffix...'
