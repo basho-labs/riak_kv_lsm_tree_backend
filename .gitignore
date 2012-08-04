@@ -4,3 +4,4 @@ priv
 c_src/*.o
 *~
 .eunit
+.test
