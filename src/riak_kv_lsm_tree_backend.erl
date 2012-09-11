@@ -1,3 +1,6 @@
+%% -*- coding: utf-8; Mode: erlang; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*-
+%% ex: set softtabstop=4 tabstop=4 shiftwidth=4 expandtab fileencoding=utf-8:
+
 %% ----------------------------------------------------------------------------
 %%
 %% lsm_tree: A Riak/KV backend using SQLite4's Log-Structured Merge Tree
@@ -21,8 +24,8 @@
 
 -module(riak_kv_lsm_tree_backend).
 -behavior(lsm_tree_temp_riak_kv_backend).
+-author('Greg Burd <greg@burd.me>').
 -author('Steve Vinoski <steve@basho.com>').
--author('Greg Burd <greg@basho.com>').
 
 %% KV Backend API
 -export([api_version/0,
@@ -41,6 +44,7 @@
          status/1,
          callback/3]).
 
+-include("include/lsm_tree.hrl").
 
 -define(log(Fmt,Args),ok).
 
@@ -51,14 +55,13 @@
          to_key_range/1]).
 -endif.
 
--include("include/lsm_tree.hrl").
 
 -define(API_VERSION, 1).
 -define(CAPABILITIES, [async_fold, indexes]).
 
--record(state, {tree,
+-record(state, {tree      :: lsm_tree:tree(),
                 partition :: integer(),
-                config :: config() }).
+                config    :: config() }).
 
 -type state() :: #state{}.
 -type config_option() :: {data_root, string()} | lsm_tree:config_option().
@@ -84,37 +87,56 @@ capabilities(_) ->
 capabilities(_, _) ->
     {ok, ?CAPABILITIES}.
 
+%% @spec get_env(App :: atom(), Key :: atom(), Default :: term()) -> term()     
+%% @doc The official way to get a value from this application's env.            
+%%      Will return Default if that key is unset.                               
+get_env(App, Key, Default) ->
+    case application:get_env(App, Key) of
+        {ok, Value} ->
+            Value;
+        _ ->
+            Default
+    end.
+
+%% @doc Return the value for Key in Properties if it exists, otherwise return   
+%%      the value from the application's env, or Default.                       
+-spec get_prop_or_env(atom(), [{atom(), term()}], atom(), term()) -> term().
+get_prop_or_env(Key, Properties, App, Default) ->
+    case proplists:get_value(Key, Properties) of
+        undefined ->
+            get_env(App, Key, Default);
+        Value ->
+            Value
+    end.
+
 %% @doc Start the lsm_tree backend
 -spec start(integer(), config()) -> {ok, state()} | {error, term()}.
 start(Partition, Config) ->
     %% Get the data root directory
-    case app_helper:get_prop_or_env(data_root, Config, lsm_tree) of
+    case get_prop_or_env(data_root, Config, lsm_tree, "lsm_tree") of
         undefined ->
             lager:error("Failed to create lsm_tree dir: data_root is not set"),
             {error, data_root_unset};
         DataRoot ->
-            AppStart = case application:start(lsm_tree) of
-                           ok ->
-                               ok;
-                           {error, {already_started, _}} ->
-                               ok;
-                           {error, StartReason} ->
-                               lager:error("Failed to init the lsm_tree backend: ~p", [StartReason]),
-                               {error, StartReason}
-                       end,
+            AppStart =
+                case application:start(lsm_tree) of
+                    ok ->
+                        ok;
+                    {error, {already_started, _}} ->
+                        ok;
+                    {error, StartReason} ->
+                        lager:error("Failed to init the lsm_tree backend: ~p", [StartReason]),
+                        {error, StartReason}
+                end,
             case AppStart of
                 ok ->
-                    case get_data_dir(DataRoot, integer_to_list(Partition)) of
-                        {ok, DataDir} ->
-                            case lsm_tree:open(DataDir, Config) of
-                                {ok, Tree} ->
-                                    {ok, #state{tree=Tree, partition=Partition, config=Config }};
-                                {error, OpenReason}=OpenError ->
-                                    lager:error("Failed to open lsm_tree: ~p\n", [OpenReason]),
-                                    OpenError
-                            end;
+                    PartitionFilename = filename:join([filename:absname(DataRoot), integer_to_list(Partition)]),
+                    ok = filelib:ensure_dir(PartitionFilename),
+                    case lsm_tree:open(PartitionFilename, Config) of
+                        {ok, Tree} ->
+                            {ok, #state{tree=Tree, partition=Partition, config=Config }};
                         {error, Reason} ->
-                            lager:error("Failed to start lsm_tree backend: ~p\n", [Reason]),
+                            lager:error("Failed to start ~p backend: ~p\n", [?MODULE, Reason]),
                             {error, Reason}
                     end;
                 Error ->
@@ -207,12 +229,11 @@ fold_buckets(FoldBucketsFun, Acc, Opts, #state{tree=Tree}) ->
 
 fold_list_buckets(PrevBucket, Tree, FoldBucketsFun, Acc) ->
     ?log("fold_list_buckets prev=~p~n", [PrevBucket]),
-    case PrevBucket of
-        undefined ->
-            RangeStart = to_object_key(<<>>, '_');
-        _ ->
-            RangeStart = to_object_key(<<PrevBucket/binary, 0>>, '_')
-    end,
+    RangeStart =
+        case PrevBucket of
+            undefined -> to_object_key(<<>>, '_');
+            _ ->         to_object_key(<<PrevBucket/binary, 0>>, '_')
+        end,
 
     Range = #key_range{ from_key=RangeStart, from_inclusive=true,
                           to_key=undefined, to_inclusive=undefined,
@@ -279,9 +300,9 @@ fold_objects(FoldObjectsFun, Acc, Opts, #state{tree=Tree}) ->
     FoldFun = fold_objects_fun(FoldObjectsFun, Bucket),
     ObjectFolder =
         fun() ->
-%                io:format(user, "starting fold_objects in ~p~n", [self()]),
+                ?log ("starting fold_objects in ~p~n", [self()]),
                 Result = lsm_tree:fold_range(Tree, FoldFun, Acc, to_key_range(Bucket)),
-%                io:format(user, "ended fold_objects in ~p => ~P~n", [self(),Result,20]),
+                ?log ("ended fold_objects in ~p => ~P~n", [self(),Result,20]),
                 Result
         end,
     case proplists:get_bool(async_fold, Opts) of
@@ -302,9 +323,9 @@ drop(#state{ tree=Tree, partition=Partition, config=Config }=State) ->
     end.
 
 %% @doc Returns true if this lsm_tree backend contains any
-%% non-tombstone values; otherwise returns false.
+%% values; otherwise returns false.
 -spec is_empty(state()) -> boolean().
-is_empty(#state{tree=Tree}) ->
+is_empty(Tree) ->
     FoldFun = fun(K, _V, Acc) -> [K|Acc] end,
     try
         Range = to_key_range(undefined),
@@ -329,18 +350,6 @@ callback(_Ref, _Msg, State) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
-
-%% @private
-%% Create the directory for this partition's LSM-BTree files
-get_data_dir(DataRoot, Partition) ->
-    PartitionDir = filename:join([DataRoot, Partition]),
-    case filelib:ensure_dir(filename:join([filename:absname(DataRoot), Partition, "x"])) of
-        ok ->
-            {ok, PartitionDir};
-        {error, Reason} ->
-            lager:error("Failed to create lsm_tree dir ~s: ~p", [PartitionDir, Reason]),
-            {error, Reason}
-    end.
 
 %% @private
 %% Return a function to fold over keys on this backend
@@ -411,13 +420,13 @@ fold_objects_fun(FoldObjectsFun, FilterBucket) ->
 -define(MAX_INDEX_KEY, <<16,0,0,0,6>>).
 
 to_key_range(undefined) ->
-    #key_range{ from_key       = to_object_key(<<>>, <<>>),
+    #key_range{   from_key       = to_object_key(<<>>, <<>>),
                   from_inclusive = true,
                   to_key         = ?MAX_OBJECT_KEY,
                   to_inclusive   = false
                 };
 to_key_range({bucket, Bucket}) ->
-    #key_range{ from_key       = to_object_key(Bucket, <<>>),
+    #key_range{   from_key       = to_object_key(Bucket, <<>>),
                   from_inclusive = true,
                   to_key         = to_object_key(<<Bucket/binary, 0>>, <<>>),
                   to_inclusive   = false };
@@ -426,12 +435,12 @@ to_key_range({index, Bucket, {eq, <<"$bucket">>, _Term}}) ->
 to_key_range({index, Bucket, {eq, Field, Term}}) ->
     to_key_range({index, Bucket, {range, Field, Term, Term}});
 to_key_range({index, Bucket, {range, <<"$key">>, StartTerm, EndTerm}}) ->
-    #key_range{ from_key       = to_object_key(Bucket, StartTerm),
+    #key_range{   from_key       = to_object_key(Bucket, StartTerm),
                   from_inclusive = true,
                   to_key         = to_object_key(Bucket, EndTerm),
                   to_inclusive   = true };
 to_key_range({index, Bucket, {range, Field, StartTerm, EndTerm}}) ->
-    #key_range{ from_key       = to_index_key(Bucket, <<>>, Field, StartTerm),
+    #key_range{   from_key       = to_index_key(Bucket, <<>>, Field, StartTerm),
                   from_inclusive = true,
                   to_key         = to_index_key(Bucket, <<16#ff,16#ff,16#ff,16#ff,
                                                           16#ff,16#ff,16#ff,16#ff,
@@ -444,9 +453,6 @@ to_key_range({index, Bucket, {range, Field, StartTerm, EndTerm}}) ->
                   to_inclusive   = false };
 to_key_range(Other) ->
     erlang:throw({unknown_limiter, Other}).
-
-
-
 
 to_object_key(Bucket, Key) ->
     sext:encode({o, Bucket, Key}).
@@ -475,7 +481,22 @@ from_index_key(LKey) ->
 %% ===================================================================
 -ifdef(TEST).
 
--include("src/lsm_tree.hrl").
+-define(KEY_IN_FROM_RANGE(Key,Range),
+        ((Range#key_range.from_inclusive andalso
+          (Range#key_range.from_key =< Key))
+         orelse
+           (Range#key_range.from_key < Key))).
+
+-define(KEY_IN_TO_RANGE(Key,Range),
+        ((Range#key_range.to_key == undefined)
+         orelse
+         ((Range#key_range.to_inclusive andalso
+             (Key =< Range#key_range.to_key))
+          orelse
+             (Key <  Range#key_range.to_key)))).
+
+-define(KEY_IN_RANGE(Key,Range),
+        (?KEY_IN_FROM_RANGE(Key,Range) andalso ?KEY_IN_TO_RANGE(Key,Range))).
 
 key_range_test() ->
     Range = to_key_range({bucket, <<"a">>}),
@@ -500,7 +521,7 @@ simple_test_() ->
     application:set_env(lsm_tree, data_root, "test/lsm_treed-backend"),
     lsm_tree_temp_riak_kv_backend:standard_test(?MODULE, []).
 
-custom_config_test_() ->
+custom_config_test_() -> %% TODO
     ?assertCmd("rm -rf test/lsm_tree-backend"),
     application:set_env(lsm_tree, data_root, ""),
     lsm_tree_temp_riak_kv_backend:standard_test(?MODULE, [{data_root, "test/lsm_tree-backend"}]).
