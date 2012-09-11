@@ -1,5 +1,6 @@
 #!/bin/sh -
 
+# http://www.sqlite.org/src4/dir?name=src&ci=tip
 function get_fnc() {
     curl -s http://www.sqlite.org/src4/raw/src?name=$1 | grep src/lsm | sed -e 's/src\///' | awk '{print $2, $3}'
 }
@@ -10,3 +11,6 @@ while read filename commit; do
 done <<EOF
 $(get_fnc 3a4aa407a7ec638df83927d4c8ec10fde396c022)
 EOF
+
+sed -i -e 's/sqlite_snprintf/snprintf/'g -e 's/SQLITE_OK/LSM_OK/g' lsm_sorted.c
+sed -i -e 's/prc = fdatasync/prc = os_fdatasync/' lsm_unix.c
