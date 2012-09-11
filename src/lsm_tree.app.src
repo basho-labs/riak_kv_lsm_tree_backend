@@ -22,7 +22,7 @@
 {application, lsm_tree,
  [
   {description, "A Riak/KV backend using SQLite4's Log-Structured Merge Tree"},
-  {vsn, "1.0.0"},
+  {vsn, "1.0.1"},
   {registered, []},
   {applications, [
                   kernel,
