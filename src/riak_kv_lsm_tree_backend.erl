@@ -87,11 +87,33 @@ capabilities(_) ->
 capabilities(_, _) ->
     {ok, ?CAPABILITIES}.
 
+%% @spec get_env(App :: atom(), Key :: atom(), Default :: term()) -> term()     
+%% @doc The official way to get a value from this application's env.            
+%%      Will return Default if that key is unset.                               
+get_env(App, Key, Default) ->
+    case application:get_env(App, Key) of
+        {ok, Value} ->
+            Value;
+        _ ->
+            Default
+    end.
+
+%% @doc Return the value for Key in Properties if it exists, otherwise return   
+%%      the value from the application's env, or Default.                       
+-spec get_prop_or_env(atom(), [{atom(), term()}], atom(), term()) -> term().
+get_prop_or_env(Key, Properties, App, Default) ->
+    case proplists:get_value(Key, Properties) of
+        undefined ->
+            get_env(App, Key, Default);
+        Value ->
+            Value
+    end.
+
 %% @doc Start the lsm_tree backend
 -spec start(integer(), config()) -> {ok, state()} | {error, term()}.
 start(Partition, Config) ->
     %% Get the data root directory
-    case app_helper:get_prop_or_env(data_root, Config, lsm_tree) of
+    case get_prop_or_env(data_root, Config, lsm_tree, "lsm_tree") of
         undefined ->
             lager:error("Failed to create lsm_tree dir: data_root is not set"),
             {error, data_root_unset};
@@ -109,11 +131,12 @@ start(Partition, Config) ->
             case AppStart of
                 ok ->
                     PartitionFilename = filename:join([filename:absname(DataRoot), integer_to_list(Partition)]),
+                    ok = filelib:ensure_dir(PartitionFilename),
                     case lsm_tree:open(PartitionFilename, Config) of
                         {ok, Tree} ->
                             {ok, #state{tree=Tree, partition=Partition, config=Config }};
-                        {error, Reason}=OpenError ->
-                            lager:error("Failed to start lsm_tree backend: ~p\n", [Reason]),
+                        {error, Reason} ->
+                            lager:error("Failed to start ~p backend: ~p\n", [?MODULE, Reason]),
                             {error, Reason}
                     end;
                 Error ->

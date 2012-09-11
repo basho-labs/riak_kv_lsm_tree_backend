@@ -403,204 +403,177 @@ drain_worker_and_return(MRef, PID, Value) ->
 %% ===================================================================
 -ifdef(TEST).
 
--define(TEST_DATA_DIR, "test/lsm_tree.basic").
+-define(TEST_DATAFILE, "lsm_tree.basic").
 
-reset_db(DataDir) ->
-    ?assertCmd("rm -rf "++DataDir),
-    ?assertMatch(ok, filelib:ensure_dir(filename:join(DataDir, "x"))).
+reset_db(DataFile) ->
+    file:delete(DataFile),
+    file:delete(filename:join(DataFile, "-log")).
 
-open_db(DataDir) ->
-    reset_db(DataDir),
-    {ok, Ref} = ?MODULE:open(DataDir),
-    Ref.
+open_db(DataFile) ->
+    {ok, Tree} = lsm_tree:open("lsm_tree.basic"),
+    Tree.
 
-open_test_config(DataDir) ->
-    reset_db(DataDir),
-    {ok, Ref} = ?MODULE:open(DataDir),
+open_test_config(DataFile) ->
+    {ok, Tree} = lsm_tree:open(DataFile),
     %% TODO
-    Ref.
+    Tree.
 
 create_a_new_database_test() ->
-    Ref = open_db(?TEST_DATA_DIR),
-    ?assertMatch(ok, ?MODULE:close(Ref)).
+    reset_db(?TEST_DATAFILE),
+    Tree = open_db(?TEST_DATAFILE),
+    ?assertMatch(ok, lsm_tree:close(Tree)).
 
 insert_delete_test() ->
-    Ref = open_db(?TEST_DATA_DIR),
-    ?assertMatch(ok, ?MODULE:put(Ref, <<"a">>, <<"apple">>)),
-    ?assertMatch({ok, <<"apple">>}, ?MODULE:get(Ref, <<"a">>)),
-    ?assertMatch(ok,  ?MODULE:delete(Ref, <<"a">>)),
-    ?assertMatch(not_found,  ?MODULE:get(Ref, <<"a">>)),
-    ok = ?MODULE:close(Ref),
-    ok = ?MODULE:close(Ref).
+    reset_db(?TEST_DATAFILE),
+    Tree = open_db(?TEST_DATAFILE),
+    ?assertMatch(ok, lsm_tree:put(Tree, <<"a">>, <<"apple">>)),
+    ?assertMatch({ok, <<"apple">>}, lsm_tree:get(Tree, <<"a">>)),
+    ?assertMatch(ok, lsm_tree:delete(Tree, <<"a">>)),
+    ?assertMatch(not_found, lsm_tree:get(Tree, <<"a">>)),
+    ?assertMatch(ok, lsm_tree:close(Tree)),
+    ok.
 
 init_test_table() ->
-    Ref = open_db(?TEST_DATA_DIR),
-    ?assertMatch(ok, ?MODULE:put(Ref, <<"a">>, <<"apple">>)),
-    ?assertMatch(ok, ?MODULE:put(Ref, <<"b">>, <<"banana">>)),
-    ?assertMatch(ok, ?MODULE:put(Ref, <<"c">>, <<"cherry">>)),
-    ?assertMatch(ok, ?MODULE:put(Ref, <<"d">>, <<"date">>)),
-    ?assertMatch(ok, ?MODULE:put(Ref, <<"g">>, <<"gooseberry">>)),
-    {Ref, Ref}.
+    reset_db(?TEST_DATAFILE),
+    Tree = open_db(?TEST_DATAFILE),
+    ?assertMatch(ok, lsm_tree:put(Tree, <<"a">>, <<"apple">>)),
+    ?assertMatch(ok, lsm_tree:put(Tree, <<"b">>, <<"banana">>)),
+    ?assertMatch(ok, lsm_tree:put(Tree, <<"c">>, <<"cherry">>)),
+    ?assertMatch(ok, lsm_tree:put(Tree, <<"d">>, <<"date">>)),
+    ?assertMatch(ok, lsm_tree:put(Tree, <<"g">>, <<"gooseberry">>)),
+    {Tree, Tree}.
 
-stop_test_table({Ref, Ref}) ->
-    ?assertMatch(ok, ?MODULE:close(Ref)),
-    ?assertMatch(ok, ?MODULE:close(Ref)).
+stop_test_table({Tree, Tree}) ->
+    ?assertMatch(ok, lsm_tree:close(Tree)).
 
-various_session_test_() ->
-    {setup,
-     fun init_test_table/0,
-     fun stop_test_table/1,
-     fun({_, Ref}) ->
-             {inorder,
-              [{"session verify",
-                fun() ->
-                        ?assertMatch(ok, ?MODULE:verify(Ref)),
-                        ?assertMatch({ok, <<"apple">>}, ?MODULE:get(Ref, <<"a">>))
-                end},
-               {"session sync",
-                fun() ->
-                        ?assertMatch(ok, ?MODULE:sync(Ref)),
-                        ?assertMatch({ok, <<"apple">>}, ?MODULE:get(Ref, <<"a">>))
-                end},
-               {"session salvage",
-                fun() ->
-                        ok = ?MODULE:salvage(Ref),
-                        {ok, <<"apple">>} = ?MODULE:get(Ref, <<"a">>)
-                end},
-               {"session upgrade",
-                fun() ->
-                        ?assertMatch(ok, ?MODULE:upgrade(Ref)),
-                        ?assertMatch({ok, <<"apple">>}, ?MODULE:get(Ref, <<"a">>))
-                end},
-               {"session truncate",
-                fun() ->
-                        ?assertMatch(ok, ?MODULE:truncate(Ref)),
-                        ?assertMatch(not_found, ?MODULE:get(Ref, <<"a">>))
-                end}]}
-     end}.
+%various_session_test_() ->
+%    {setup,
+%     fun init_test_table/0,
+%     fun stop_test_table/1,
+%     fun({_, Tree}) ->
+%             {inorder,
+%             [
+% TODO:       {"session verify",
+%                fun() ->
+%                        ?assertMatch(ok, lsm_tree:verify(Tree)),
+%                        ?assertMatch({ok, <<"apple">>}, lsm_tree:get(Tree, <<"a">>))
+%                end}
+% TODO:       ,{"session flush",
+%                fun() ->
+%                        ?assertMatch(ok, lsm_tree:flush(Tree)),
+%                        ?assertMatch({ok, <<"apple">>}, lsm_tree:get(Tree, <<"a">>))
+%                end}
+% TODO:       ,{"session salvage",
+%                fun() ->
+%                        ok = lsm_tree:salvage(Tree),
+%                        {ok, <<"apple">>} = lsm_tree:get(Tree, <<"a">>)
+%                end}
+% TODO:       ,{"session upgrade",
+%                fun() ->
+%                        ?assertMatch(ok, lsm_tree:upgrade(Tree)),
+%                        ?assertMatch({ok, <<"apple">>}, lsm_tree:get(Tree, <<"a">>))
+%                end}
+% TODO:       ,{"session truncate",
+%                fun() ->
+%                        ?assertMatch(ok, lsm_tree:truncate(Tree)),
+%                        ?assertMatch(not_found, lsm_tree:get(Tree, <<"a">>))
+%                end}
+%              ]}
+%     end}.
 
-cursor_open_close_test() ->
-    {Ref, Ref} = init_test_table(),
-    {ok, Cursor1} = ?MODULE:cursor_open(Ref),
-    ?assertMatch({ok, <<"a">>, <<"apple">>}, ?MODULE:cursor_next(Cursor1)),
-    ?assertMatch(ok, ?MODULE:cursor_close(Cursor1)),
-    {ok, Cursor2} = ?MODULE:cursor_open(Ref),
-    ?assertMatch({ok, <<"g">>, <<"gooseberry">>}, ?MODULE:cursor_prev(Cursor2)),
-    ?assertMatch(ok, ?MODULE:cursor_close(Cursor2)),
-    stop_test_table({Ref, Ref}).
+cursor_open_pos_get_then_close_test() ->
+    {Tree, Tree} = init_test_table(),
+    {ok, Cursor1} = lsm_tree:cursor_open(Tree),
+    ?assertMatch(ok, lsm_tree:cursor_first(Cursor1)),
+    ?assertMatch({ok, <<"a">>, <<"apple">>}, lsm_tree:cursor_next(Cursor1)),
+    ?assertMatch(ok, lsm_tree:cursor_close(Cursor1)),
+    {ok, Cursor2} = lsm_tree:cursor_open(Tree),
+    ?assertMatch(ok, lsm_tree:cursor_last(Cursor2)),
+    ?assertMatch({ok, <<"g">>, <<"gooseberry">>}, lsm_tree:cursor_prev(Cursor2)),
+    ?assertMatch(ok, lsm_tree:cursor_close(Cursor2)),
+    stop_test_table({Tree, Tree}).
 
 various_cursor_test_() ->
     {setup,
      fun init_test_table/0,
      fun stop_test_table/1,
-     fun({_, Ref}) ->
+     fun({_, Tree}) ->
              {inorder,
-              [{"move a cursor back and forth, getting key",
+              [{"move a cursor forward, getting key",
                 fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
-                        ?assertMatch({ok, <<"a">>}, ?MODULE:cursor_next_key(Cursor)),
-                        ?assertMatch({ok, <<"b">>}, ?MODULE:cursor_next_key(Cursor)),
-                        ?assertMatch({ok, <<"c">>}, ?MODULE:cursor_next_key(Cursor)),
-                        ?assertMatch({ok, <<"d">>}, ?MODULE:cursor_next_key(Cursor)),
-                        ?assertMatch({ok, <<"c">>}, ?MODULE:cursor_prev_key(Cursor)),
-                        ?assertMatch({ok, <<"d">>}, ?MODULE:cursor_next_key(Cursor)),
-                        ?assertMatch({ok, <<"g">>}, ?MODULE:cursor_next_key(Cursor)),
-                        ?assertMatch(not_found, ?MODULE:cursor_next_key(Cursor)),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor))
+                        {ok, Cursor} = lsm_tree:cursor_open(Tree),
+                        ?assertMatch(ok, lsm_tree:cursor_first(Cursor)),
+                        ?assertMatch({ok, <<"a">>}, lsm_tree:cursor_next_key(Cursor)),
+                        ?assertMatch({ok, <<"b">>}, lsm_tree:cursor_next_key(Cursor)),
+                        ?assertMatch({ok, <<"c">>}, lsm_tree:cursor_next_key(Cursor)),
+                        ?assertMatch({ok, <<"d">>}, lsm_tree:cursor_next_key(Cursor)),
+                        ?assertMatch({ok, <<"g">>}, lsm_tree:cursor_next_key(Cursor)),
+                        ?assertMatch(not_found, lsm_tree:cursor_next_key(Cursor)),
+                        ?assertMatch(ok, lsm_tree:cursor_close(Cursor))
                 end},
-               {"move a cursor back and forth, getting value",
+               {"move a cursor forward, getting value",
                 fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
-                        ?assertMatch({ok, <<"apple">>}, ?MODULE:cursor_next_value(Cursor)),
-                        ?assertMatch({ok, <<"banana">>}, ?MODULE:cursor_next_value(Cursor)),
-                        ?assertMatch({ok, <<"cherry">>}, ?MODULE:cursor_next_value(Cursor)),
-                        ?assertMatch({ok, <<"date">>}, ?MODULE:cursor_next_value(Cursor)),
-                        ?assertMatch({ok, <<"cherry">>}, ?MODULE:cursor_prev_value(Cursor)),
-                        ?assertMatch({ok, <<"date">>}, ?MODULE:cursor_next_value(Cursor)),
-                        ?assertMatch({ok, <<"gooseberry">>}, ?MODULE:cursor_next_value(Cursor)),
-                        ?assertMatch(not_found, ?MODULE:cursor_next_value(Cursor)),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor))
+                        {ok, Cursor} = lsm_tree:cursor_open(Tree),
+                        ?assertMatch(ok, lsm_tree:cursor_first(Cursor)),
+                        ?assertMatch({ok, <<"apple">>}, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch({ok, <<"banana">>}, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch({ok, <<"cherry">>}, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch({ok, <<"date">>}, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch({ok, <<"gooseberry">>}, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch(not_found, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch(ok, lsm_tree:cursor_close(Cursor))
                 end},
-               {"move a cursor back and forth, getting key and value",
+               {"move a cursor forward, getting key and value",
                 fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
-                        ?assertMatch({ok, <<"a">>, <<"apple">>}, ?MODULE:cursor_next(Cursor)),
-                        ?assertMatch({ok, <<"b">>, <<"banana">>}, ?MODULE:cursor_next(Cursor)),
-                        ?assertMatch({ok, <<"c">>, <<"cherry">>}, ?MODULE:cursor_next(Cursor)),
-                        ?assertMatch({ok, <<"d">>, <<"date">>}, ?MODULE:cursor_next(Cursor)),
-                        ?assertMatch({ok, <<"c">>, <<"cherry">>}, ?MODULE:cursor_prev(Cursor)),
-                        ?assertMatch({ok, <<"d">>, <<"date">>}, ?MODULE:cursor_next(Cursor)),
-                        ?assertMatch({ok, <<"g">>, <<"gooseberry">>}, ?MODULE:cursor_next(Cursor)),
-                        ?assertMatch(not_found, ?MODULE:cursor_next(Cursor)),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor))
+                        {ok, Cursor} = lsm_tree:cursor_open(Tree),
+                        ?assertMatch(ok, lsm_tree:cursor_first(Cursor)),
+                        ?assertMatch({ok, <<"a">>, <<"apple">>}, lsm_tree:cursor_next(Cursor)),
+                        ?assertMatch({ok, <<"b">>, <<"banana">>}, lsm_tree:cursor_next(Cursor)),
+                        ?assertMatch({ok, <<"c">>, <<"cherry">>}, lsm_tree:cursor_next(Cursor)),
+                        ?assertMatch({ok, <<"d">>, <<"date">>}, lsm_tree:cursor_next(Cursor)),
+                        ?assertMatch({ok, <<"g">>, <<"gooseberry">>}, lsm_tree:cursor_next(Cursor)),
+                        ?assertMatch(not_found, lsm_tree:cursor_next(Cursor)),
+                        ?assertMatch(ok, lsm_tree:cursor_close(Cursor))
                 end},
                {"fold keys",
                 fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
+                        {ok, Cursor} = lsm_tree:cursor_open(Tree),
+                        ?assertMatch(ok, lsm_tree:cursor_first(Cursor)),
                         ?assertMatch([<<"g">>, <<"d">>, <<"c">>, <<"b">>, <<"a">>],
                                      fold_keys(Cursor, fun(Key, Acc) -> [Key | Acc] end, [])),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor))
+                        ?assertMatch(ok, lsm_tree:cursor_close(Cursor))
                 end},
                {"search for an item",
                 fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
-                        ?assertMatch({ok, <<"banana">>}, ?MODULE:cursor_search(Cursor, <<"b">>)),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor))
+                        {ok, Cursor} = lsm_tree:cursor_open(Tree),
+                        ?assertMatch(ok, lsm_tree:cursor_first(Cursor)),
+                        ?assertMatch(ok, lsm_tree:cursor_position(Cursor, <<"b">>)),
+                        ?assertMatch(ok, lsm_tree:cursor_close(Cursor))
                 end},
-               {"range search for an item",
+               {"check cursor re-position",
                 fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
-                        ?assertMatch({ok, <<"gooseberry">>},
-                                     ?MODULE:cursor_search_near(Cursor, <<"z">>)),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor))
-                end},
-               {"check cursor reset",
-                fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
-                        ?assertMatch({ok, <<"apple">>}, ?MODULE:cursor_next_value(Cursor)),
-                        ?assertMatch(ok, ?MODULE:cursor_reset(Cursor)),
-                        ?assertMatch({ok, <<"apple">>}, ?MODULE:cursor_next_value(Cursor)),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor))
+                        {ok, Cursor} = lsm_tree:cursor_open(Tree),
+                        ?assertMatch(ok, lsm_tree:cursor_first(Cursor)),
+                        ?assertMatch({ok, <<"apple">>}, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch(ok, lsm_tree:cursor_first(Cursor)),
+                        ?assertMatch({ok, <<"apple">>}, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch(ok, lsm_tree:cursor_close(Cursor))
                 end},
                {"insert/overwrite an item using a cursor",
                 fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
-                        ?assertMatch(ok,
-                                     ?MODULE:cursor_insert(Cursor, <<"h">>, <<"huckleberry">>)),
-                        ?assertMatch({ok, <<"huckleberry">>},
-                                     ?MODULE:cursor_search(Cursor, <<"h">>)),
-                        ?assertMatch(ok,
-                                     ?MODULE:cursor_insert(Cursor, <<"g">>, <<"grapefruit">>)),
-                        ?assertMatch({ok, <<"grapefruit">>},
-                                     ?MODULE:cursor_search(Cursor, <<"g">>)),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor)),
-                        ?assertMatch({ok, <<"grapefruit">>},
-                                     ?MODULE:get(Ref, <<"g">>)),
-                        ?assertMatch({ok, <<"huckleberry">>},
-                                     ?MODULE:get(Ref, <<"h">>))
-                end},
-               {"update an item using a cursor",
-                fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
-                        ?assertMatch(ok,
-                                     ?MODULE:cursor_update(Cursor, <<"g">>, <<"goji berries">>)),
-                        ?assertMatch(not_found,
-                                     ?MODULE:cursor_update(Cursor, <<"k">>, <<"kumquat">>)),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor)),
-                        ?assertMatch({ok, <<"goji berries">>},
-                                     ?MODULE:get(Ref, <<"g">>))
-                end},
-               {"remove an item using a cursor",
-                fun() ->
-                        {ok, Cursor} = ?MODULE:cursor_open(Ref),
-                        ?assertMatch(ok,
-                                     ?MODULE:cursor_remove(Cursor, <<"g">>, <<"goji berries">>)),
-                        ?assertMatch(not_found,
-                                     ?MODULE:cursor_remove(Cursor, <<"l">>, <<"lemon">>)),
-                        ?assertMatch(ok, ?MODULE:cursor_close(Cursor)),
-                        ?assertMatch(not_found,
-                                     ?MODULE:get(Ref, <<"g">>))
-                end}]}
+                        {ok, Cursor} = lsm_tree:cursor_open(Tree),
+                        ?assertMatch(ok, lsm_tree:cursor_first(Cursor)),
+                        ?assertMatch(ok, lsm_tree:put(Tree, <<"h">>, <<"huckleberry">>)),
+                        ?assertMatch(ok, lsm_tree:cursor_position(Cursor, <<"h">>)),
+% TODO:                 ?assertMatch({ok, <<"huckleberry">>}, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch(ok, lsm_tree:put(Tree, <<"g">>, <<"grapefruit">>)),
+                        ?assertMatch(ok, lsm_tree:cursor_position(Cursor, <<"g">>)),
+% TODO:                 ?assertMatch({ok, <<"grapefruit">>}, lsm_tree:cursor_next_value(Cursor)),
+                        ?assertMatch(ok, lsm_tree:cursor_close(Cursor)),
+                        ?assertMatch({ok, <<"grapefruit">>}, lsm_tree:get(Tree, <<"g">>)),
+                        ?assertMatch({ok, <<"huckleberry">>}, lsm_tree:get(Tree, <<"h">>))
+                end}
+              ]}
      end}.
 
 -ifdef(EQC).
@@ -617,13 +590,13 @@ values() ->
 ops(Keys, Values) ->
     {oneof([put, delete]), oneof(Keys), oneof(Values)}.
 
-apply_kv_ops([], _Ref,  Acc0) ->
+apply_kv_ops([], _Tree,  Acc0) ->
     Acc0;
-apply_kv_ops([{put, K, V} | Rest], Ref, Acc0) ->
-    ok = ?MODULE:put(Ref, K, V),
-    apply_kv_ops(Rest, Ref, orddict:store(K, V, Acc0));
-apply_kv_ops([{delete, K, _} | Rest], Ref, Acc0) ->
-    ok = case ?MODULE:delete(Ref, K) of
+apply_kv_ops([{put, K, V} | Rest], Tree, Acc0) ->
+    ok = lsm_tree:put(Tree, K, V),
+    apply_kv_ops(Rest, Tree, orddict:store(K, V, Acc0));
+apply_kv_ops([{delete, K, _} | Rest], Tree, Acc0) ->
+    ok = case lsm_tree:delete(Tree, K) of
              ok ->
                  ok;
              not_found ->
@@ -631,7 +604,7 @@ apply_kv_ops([{delete, K, _} | Rest], Ref, Acc0) ->
              Else ->
                  Else
          end,
-    apply_kv_ops(Rest, Ref, orddict:store(K, deleted, Acc0)).
+    apply_kv_ops(Rest, Tree, orddict:store(K, deleted, Acc0)).
 
 prop_put_delete() ->
     ?LET({Keys, Values}, {keys(), values()},
@@ -640,20 +613,20 @@ prop_put_delete() ->
                      DataDir = "/tmp/lsm_tree.putdelete.qc",
                      ?cmd("rm -rf "++DataDir),
                      ok = filelib:ensure_dir(filename:join(DataDir, "x")),
-                     {ok, Ref} = ?MODULE:open(DataDir, [{create, true}]),
+                     {ok, Tree} = lsm_tree:open(DataDir, [{create, true}]),
                      try
-                         Model = apply_kv_ops(Ops, Ref, []),
+                         Model = apply_kv_ops(Ops, Tree, []),
 
                          %% Validate that all deleted values return not_found
                          F = fun({K, deleted}) ->
-                                     ?assertEqual(not_found, ?MODULE:get(Ref, K));
+                                     ?assertEqual(not_found, lsm_tree:get(Tree, K));
                                 ({K, V}) ->
-                                     ?assertEqual({ok, V}, ?MODULE:get(Ref, K))
+                                     ?assertEqual({ok, V}, lsm_tree:get(Tree, K))
                              end,
                          lists:map(F, Model),
                          true
                      after
-                         ?MODULE:close(Ref),
+                         lsm_tree:close(Tree),
                      end
                  end)).
 

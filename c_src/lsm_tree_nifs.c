@@ -405,13 +405,14 @@ static ERL_NIF_TERM lsm_tree_close(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
 
     lsm_db* db = tree_handle->pDb;
 
-    /* Rollback any uncommitted write transactions */
-    lsm_rollback(db, 2);
+    /* Rollback any uncommitted transactions */
+    lsm_rollback(db, 0);
 
     /* Close the shared cursor */
     lsm_cursor* cursor = tree_handle->pSharedCsr;
     if (cursor)
         lsm_csr_close(cursor);
+    tree_handle->pSharedCsr = 0;
 
     /* At this point all open cursors should be closed, otherwise this will fail (misuse) */
     rc = lsm_close(db);
@@ -427,7 +428,6 @@ static int __shared_cursor(ErlNifEnv* env, LsmTreeHandle* tree_handle)
     int rc = LSM_OK;
     rc = lsm_csr_open(db, &tree_handle->pSharedCsr);
     if (rc != LSM_OK) return make_error(env, rc);
-    rc = lsm_begin(db, 1);
     if (rc != LSM_OK) {
         lsm_csr_close(tree_handle->pSharedCsr);
         tree_handle->pSharedCsr = 0;
@@ -490,18 +490,8 @@ static ERL_NIF_TERM lsm_tree_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
 
-//        rc = lsm_begin(db, 2); DPRINTF("lsm_tree_put/lsm_begin() = %d\n", rc);
-//        if (rc != LSM_OK) return make_error(env, rc);
-
         rc = lsm_write(db, key.data, key.size, value.data, value.size);
         return rc == LSM_OK ? ATOM_OK : make_error(env, rc);
-//        if (rc == LSM_OK) {
-//            int trc = lsm_commit(db, 2); DPRINTF("lsm_tree_put/lsm_commit() = %d/%d\n", rc, trc);
-//            return LSM_OK;
-//        } else {
-//            int trc = lsm_rollback(db, 2); DPRINTF("lsm_tree_put/lsm_rollback() = %d/%d\n", rc, trc);
-//            return make_error(env, rc);
-//        }
     }
     return ATOM_BADARG;
 }
@@ -529,20 +519,11 @@ static ERL_NIF_TERM lsm_tree_delete(ErlNifEnv* env, int argc, const ERL_NIF_TERM
             int raw_key_size;
             rc = lsm_csr_key(cursor, &raw_key, &raw_key_size);
             if (rc != LSM_OK) {
-                lsm_rollback(db, 2);
                 lsm_csr_close(cursor);
                 return make_error(env, rc);
             }
-
-            rc = lsm_begin(db, 2);
-            if (rc != LSM_OK) return make_error(env, rc);
-
             rc = lsm_delete(db, raw_key, raw_key_size);
-            if (rc == LSM_OK) {
-                lsm_commit(db, 2);
-                return LSM_OK;
-            } else {
-                lsm_rollback(db, 2);
+            if (rc != LSM_OK) {
                 lsm_csr_close(cursor);
                 tree_handle->pSharedCsr = 0;
                 return make_error(env, rc);
@@ -573,6 +554,12 @@ static ERL_NIF_TERM __op_worker(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
     if (enif_get_resource(env, argv[0], lsm_tree_RESOURCE, (void**)&tree_handle)) {
         int rc = LSM_OK;
         lsm_db* db = tree_handle->pDb;
+
+        /* Close the shared cursor */
+        if (tree_handle->pSharedCsr) {
+          lsm_csr_close(tree_handle->pSharedCsr);
+          tree_handle->pSharedCsr = 0;
+        }
 
         switch (op) {
         case LSM_OP_SALVAGE: //TODO
@@ -658,7 +645,6 @@ static ERL_NIF_TERM lsm_cursor_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM
         cursor_handle->tree_handle = tree_handle;
         lsm_cursor* cursor;
 
-        rc = lsm_begin(db, 1);
         if (rc != LSM_OK) return  make_error(env, rc);
 
         rc = lsm_csr_open(db, &cursor);

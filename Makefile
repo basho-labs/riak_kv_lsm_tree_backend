@@ -2,6 +2,7 @@ TARGET=		lsm_tree
 
 REBAR=		/usr/bin/env rebar
 ERL=		/usr/bin/env erl
+ERL_BINDIR=	/opt/erlang/r15b02/erts-5.9.2/bin
 DIALYZER=	dialyzer
 
 .PHONY: plt analyze all deps compile get-deps clean
@@ -45,3 +46,7 @@ analyze: compile
 
 repl:
 	$(ERL) -pz deps/*/ebin -pa ebin
+
+gdb-repl:
+	USE_GDB=1 $(ERL) -pz deps/*/ebin -pa ebin
+#	gdb $(ERL_BINDIR)/erlexec --args $(ERL_BINDIR)/erlexec -pz deps/*/ebin -pa ebin
