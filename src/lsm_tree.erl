@@ -626,7 +626,7 @@ prop_put_delete() ->
                          lists:map(F, Model),
                          true
                      after
-                         lsm_tree:close(Tree),
+                         lsm_tree:close(Tree)
                      end
                  end)).
 
