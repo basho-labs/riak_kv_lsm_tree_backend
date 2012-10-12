@@ -610,9 +610,9 @@ prop_put_delete() ->
     ?LET({Keys, Values}, {keys(), values()},
          ?FORALL(Ops, eqc_gen:non_empty(list(ops(Keys, Values))),
                  begin
-                     DataDir = "/tmp/lsm_tree.putdelete.qc",
+                     DataDir = "/tmp/lsm_tree.putdelete.qc/file.dat",
                      ?cmd("rm -rf "++DataDir),
-                     ok = filelib:ensure_dir(filename:join(DataDir, "x")),
+                     ok = filelib:ensure_dir(DataDir),
                      {ok, Tree} = lsm_tree:open(DataDir, [{create, true}]),
                      try
                          Model = apply_kv_ops(Ops, Tree, []),
