@@ -1055,4 +1055,10 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     return 0;
 }
 
-ERL_NIF_INIT(lsm_tree, nif_funcs, &on_load, NULL, NULL, NULL);
+static int on_upgrade(ErlNifEnv* env, void** priv_data, void** old_priv_data, ERL_NIF_TERM load_info)
+{
+    *priv_data = *old_priv_data;
+    return 0;
+}
+
+ERL_NIF_INIT(lsm_tree, nif_funcs, &on_load, NULL, &on_upgrade, NULL);

@@ -87,9 +87,9 @@ capabilities(_) ->
 capabilities(_, _) ->
     {ok, ?CAPABILITIES}.
 
-%% @spec get_env(App :: atom(), Key :: atom(), Default :: term()) -> term()     
-%% @doc The official way to get a value from this application's env.            
-%%      Will return Default if that key is unset.                               
+%% @spec get_env(App :: atom(), Key :: atom(), Default :: term()) -> term()
+%% @doc The official way to get a value from this application's env.
+%%      Will return Default if that key is unset.
 get_env(App, Key, Default) ->
     case application:get_env(App, Key) of
         {ok, Value} ->
@@ -98,8 +98,8 @@ get_env(App, Key, Default) ->
             Default
     end.
 
-%% @doc Return the value for Key in Properties if it exists, otherwise return   
-%%      the value from the application's env, or Default.                       
+%% @doc Return the value for Key in Properties if it exists, otherwise return
+%%      the value from the application's env, or Default.
 -spec get_prop_or_env(atom(), [{atom(), term()}], atom(), term()) -> term().
 get_prop_or_env(Key, Properties, App, Default) ->
     case proplists:get_value(Key, Properties) of
