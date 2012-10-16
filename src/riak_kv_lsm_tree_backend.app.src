@@ -19,7 +19,7 @@
 %%
 %% ----------------------------------------------------------------------------
 
-{application, lsm_tree,
+{application, riak_kv_lsm_tree_backend,
  [
   {description, "A Riak/KV backend using SQLite4's Log-Structured Merge Tree"},
   {vsn, "1.1.0"},
